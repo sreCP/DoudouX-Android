@@ -1,5 +1,6 @@
 *.iml
 .gradle/
+.workbuddy/
 /local.properties
 /.idea/
 .DS_Store

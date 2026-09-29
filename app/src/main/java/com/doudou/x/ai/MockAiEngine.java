@@ -136,12 +136,39 @@ public class MockAiEngine implements AiEngine {
                     + "不过演示一下：北京今天晴，18~26℃，微风，适合出门走走。"
                     + "（此为模拟数据，请以实际天气为准）";
         }
+        if (containsAny(q, "表格", "table", "markdown", "对比")) {
+            return "Markdown 表格渲染示例（表头加粗、行间分隔、数据行底色交替）：\n\n"
+                    + "| 渲染模式 | 超长行表现 | 适用场景 |\n"
+                    + "| --- | :---: | ---: |\n"
+                    + "| 单行横滚 | 不换行，整体横向滚动，每一行都能看完整 | 代码、日志、SQL |\n"
+                    + "| 自动换行 | 按屏幕宽度折行，表格压缩到一屏内 | 说明性长文本 |\n\n"
+                    + "再来一个带列对齐的宽表（左 / 居中 / 右对齐）：\n\n"
+                    + "| 指标 | 说明 | 数值 | 备注 |\n"
+                    + "| --- | --- | ---: | :---: |\n"
+                    + "| 首屏渲染 | 从冷启动到列表首帧绘制完成 | 320 ms | 已达标 |\n"
+                    + "| 流式首字 | 请求发出到收到第一个 token | 680 ms | 依赖网络 |\n"
+                    + "| 内存占用 | 会话页面常驻增量 | 48 MB | 需持续观察 |\n\n"
+                    + "在「设置」里切换渲染模式，可以看到表格同样会跟随切换。";
+        }
         if (containsAny(q, "android", "安卓", "java", "代码", "编程")) {
             return "聊到我熟悉的领域了！关于 Android 开发，一般建议：\n"
                     + "1. 优先保证主线程只做 UI 相关工作；\n"
                     + "2. 列表场景使用 RecyclerView 并复用 ViewHolder；\n"
                     + "3. 耗时任务交给线程池，注意页面销毁时取消回调；\n"
-                    + "4. 适配 targetSdk 35 时注意边缘到边缘（edge-to-edge）布局。"
+                    + "4. 适配 targetSdk 35 时注意边缘到边缘（edge-to-edge）布局。\n\n"
+                    + "下面是一段流式回调的示例代码（最后一行故意很长，用来演示超长行的两种渲染方式）：\n\n"
+                    + "```java\n"
+                    + "public void streamReply(String question, StreamCallback callback) {\n"
+                    + "    executor.execute(() -> doRequest(question, callback));\n"
+                    + "}\n"
+                    + "\n"
+                    + "private void doRequest(String question, StreamCallback callback) {\n"
+                    + "    StringBuilder answer = new StringBuilder();\n"
+                    + "    // 逐 token 回调，UI 侧增量刷新即可形成打字机效果\n"
+                    + "    for (String token : tokens) { answer.append(token); callback.onToken(answer.toString()); }\n"
+                    + "}\n"
+                    + "String veryLongLine = \"这一行非常非常长，用来演示单行横向滚动与自动换行两种渲染模式的区别，可以拖着看完整内容，也可以打开设置里的换行开关看黑灰相间的行间标记效果，横屏时能看到更完整的一行\";\n"
+                    + "```\n\n"
                     + "如果你有具体问题，可以继续追问～";
         }
         if (containsAny(q, "笑话", "开心", "无聊")) {

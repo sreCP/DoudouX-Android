@@ -29,9 +29,12 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- 声明 configChanges：横竖屏切换不重建 Activity，
+             保证旋转时流式输出不中断，代码块也能用上横屏更宽的空间 -->
         <activity
             android:name=".ui.chat.MainActivity"
             android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
             android:windowSoftInputMode="adjustResize" />
 
         <activity

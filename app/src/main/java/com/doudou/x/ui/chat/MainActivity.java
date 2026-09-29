@@ -30,6 +30,7 @@ import com.doudou.x.ai.OpenAiEngine;
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.data.ConversationStore;
 import com.doudou.x.data.SessionManager;
+import com.doudou.x.data.UiSettingsStore;
 import com.doudou.x.model.ChatMessage;
 import com.doudou.x.model.Conversation;
 import com.doudou.x.ui.login.LoginActivity;
@@ -60,6 +61,7 @@ public class MainActivity extends AppCompatActivity {
     private AiEngine mockEngine;
     private OpenAiEngine openAiEngine;
     private ApiConfigStore apiConfig;
+    private UiSettingsStore uiSettings;
     private ConversationStore store;
     private SessionManager session;
 
@@ -78,6 +80,7 @@ public class MainActivity extends AppCompatActivity {
         }
         store = ConversationStore.getInstance(this);
         apiConfig = ApiConfigStore.getInstance(this);
+        uiSettings = UiSettingsStore.getInstance(this);
         mockEngine = new MockAiEngine();
         openAiEngine = new OpenAiEngine(apiConfig);
 
@@ -134,6 +137,16 @@ public class MainActivity extends AppCompatActivity {
                         showRawResponseDialog(message);
                     }
                 });
+        chatAdapter.setOnCodeCopyListener(new ChatAdapter.OnCodeCopyListener() {
+            @Override
+            public void onCopyCode(String code) {
+                ClipboardManager cm = (ClipboardManager)
+                        getSystemService(Context.CLIPBOARD_SERVICE);
+                cm.setPrimaryClip(ClipData.newPlainText("code", code));
+                Toast.makeText(MainActivity.this, R.string.copied, Toast.LENGTH_SHORT).show();
+            }
+        });
+        applyCodeRenderMode();
         LinearLayoutManager layoutManager = new LinearLayoutManager(this);
         layoutManager.setStackFromEnd(true);
         recyclerChat.setLayoutManager(layoutManager);
@@ -185,6 +198,13 @@ public class MainActivity extends AppCompatActivity {
     // ------------------------------------------------------------------
     // 对话逻辑
     // ------------------------------------------------------------------
+
+    /** 应用代码块渲染方式（单行横滚 / 自动换行黑灰相间）。 */
+    private void applyCodeRenderMode() {
+        chatAdapter.setCodeRenderMode(uiSettings.isCodeWrapEnabled()
+                ? CodeBlockRenderer.MODE_WRAP
+                : CodeBlockRenderer.MODE_SINGLE_LINE);
+    }
 
     /** 按当前配置选择引擎：配置齐全走真实 API，否则本地模拟。 */
     private AiEngine pickEngine() {
@@ -376,7 +396,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         if (session != null && session.isLoggedIn()) {
-            // 从设置页返回（可能清空了历史或退出登录）
+            // 从设置页返回（可能改了渲染方式、清空了历史或退出登录）
+            applyCodeRenderMode();
+            chatAdapter.notifyDataSetChanged();
             refreshHistoryList();
             tvAccount.setText(session.getMaskedPhone());
             if (currentConversation != null) {

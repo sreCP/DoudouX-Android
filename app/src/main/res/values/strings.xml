@@ -37,6 +37,10 @@
     <string name="settings_version">版本</string>
     <string name="settings_about">关于兜兜X</string>
     <string name="settings_api_entry">AI 接口设置</string>
+    <string name="settings_code_mode">代码块 / 表格换行渲染</string>
+    <string name="settings_code_mode_subtitle_on">自动换行：代码块行间黑灰相间，表格压缩进一屏</string>
+    <string name="settings_code_mode_subtitle_off">单行显示：横向滚动查看完整内容</string>
+    <string name="code_copy">复制</string>
     <string name="settings_api_status_mock">未启用（使用模拟回复）</string>
     <string name="settings_api_status_real">已启用 · </string>
 

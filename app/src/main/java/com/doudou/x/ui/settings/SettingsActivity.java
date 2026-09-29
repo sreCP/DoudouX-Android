@@ -13,19 +13,23 @@ import android.widget.Toast;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 
 import com.doudou.x.R;
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.data.ConversationStore;
 import com.doudou.x.data.SessionManager;
+import com.doudou.x.data.UiSettingsStore;
 import com.doudou.x.ui.login.LoginActivity;
 
 /**
- * 设置页：账号信息、AI 接口、清空历史、版本、退出登录。
+ * 设置页：账号信息、AI 接口、代码块渲染、清空历史、版本、退出登录。
  */
 public class SettingsActivity extends AppCompatActivity {
 
     private TextView tvApiStatus;
+    private SwitchCompat switchCodeWrap;
+    private TextView tvCodeModeSubtitle;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -57,6 +61,21 @@ public class SettingsActivity extends AppCompatActivity {
                 startActivity(new Intent(SettingsActivity.this, ApiSettingsActivity.class));
             }
         });
+
+        switchCodeWrap = findViewById(R.id.switchCodeWrap);
+        tvCodeModeSubtitle = findViewById(R.id.tvCodeModeSubtitle);
+        final UiSettingsStore uiSettings = UiSettingsStore.getInstance(this);
+        switchCodeWrap.setChecked(uiSettings.isCodeWrapEnabled());
+        refreshCodeModeSubtitle();
+        switchCodeWrap.setOnCheckedChangeListener(
+                new android.widget.CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(android.widget.CompoundButton buttonView,
+                                                 boolean isChecked) {
+                        uiSettings.setCodeWrapEnabled(isChecked);
+                        refreshCodeModeSubtitle();
+                    }
+                });
 
         btnClearHistory.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -98,6 +117,13 @@ public class SettingsActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         refreshApiStatus();
+    }
+
+    /** 显示当前代码块渲染方式说明。 */
+    private void refreshCodeModeSubtitle() {
+        tvCodeModeSubtitle.setText(switchCodeWrap.isChecked()
+                ? R.string.settings_code_mode_subtitle_on
+                : R.string.settings_code_mode_subtitle_off);
     }
 
     /** 显示当前 AI 接口启用状态。 */
