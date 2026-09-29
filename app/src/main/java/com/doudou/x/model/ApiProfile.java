@@ -5,27 +5,53 @@ import org.json.JSONObject;
 /**
  * 一套 AI 接口配置（OpenAI 兼容格式）。
  * 一个账号下可以保存多套，随时切换使用哪一套。
+ *
+ * 模型参数默认值说明：
+ * · temperature / topP 为负数 → 不下发该字段，使用服务端默认；
+ * · maxTokens 为 0 → 不限制输出长度（不下发该字段）。
  */
 public class ApiProfile {
+
+    /** 表示「不下发该参数，使用服务端默认」。 */
+    public static final float VALUE_UNSET = -1f;
+    public static final int MAX_TOKENS_UNLIMITED = 0;
 
     private static final String JSON_ID = "id";
     private static final String JSON_NAME = "name";
     private static final String JSON_BASE_URL = "baseUrl";
     private static final String JSON_API_KEY = "apiKey";
     private static final String JSON_MODEL = "model";
+    private static final String JSON_SYSTEM_PROMPT = "systemPrompt";
+    private static final String JSON_TEMPERATURE = "temperature";
+    private static final String JSON_TOP_P = "topP";
+    private static final String JSON_MAX_TOKENS = "maxTokens";
 
     private String id;
     private String name;
     private String baseUrl;
     private String apiKey;
     private String model;
+    private String systemPrompt;
+    private float temperature;
+    private float topP;
+    private int maxTokens;
 
     public ApiProfile(String id, String name, String baseUrl, String apiKey, String model) {
+        this(id, name, baseUrl, apiKey, model, "", VALUE_UNSET, VALUE_UNSET,
+                MAX_TOKENS_UNLIMITED);
+    }
+
+    public ApiProfile(String id, String name, String baseUrl, String apiKey, String model,
+                      String systemPrompt, float temperature, float topP, int maxTokens) {
         this.id = id;
         this.name = name;
         this.baseUrl = baseUrl == null ? "" : baseUrl;
         this.apiKey = apiKey == null ? "" : apiKey;
         this.model = model == null ? "" : model;
+        this.systemPrompt = systemPrompt == null ? "" : systemPrompt;
+        this.temperature = temperature;
+        this.topP = topP;
+        this.maxTokens = maxTokens;
     }
 
     public String getId() {
@@ -68,8 +94,45 @@ public class ApiProfile {
         this.model = model == null ? "" : model;
     }
 
+    /** 系统提示词，为空表示不下发 system 消息。 */
+    public String getSystemPrompt() {
+        return systemPrompt;
+    }
+
+    public void setSystemPrompt(String systemPrompt) {
+        this.systemPrompt = systemPrompt == null ? "" : systemPrompt;
+    }
+
+    /** 温度，负数表示使用服务端默认。 */
+    public float getTemperature() {
+        return temperature;
+    }
+
+    public void setTemperature(float temperature) {
+        this.temperature = temperature;
+    }
+
+    /** 核采样，负数表示使用服务端默认。 */
+    public float getTopP() {
+        return topP;
+    }
+
+    public void setTopP(float topP) {
+        this.topP = topP;
+    }
+
+    /** 单次回复最大 token，0 表示不限制。 */
+    public int getMaxTokens() {
+        return maxTokens;
+    }
+
+    public void setMaxTokens(int maxTokens) {
+        this.maxTokens = maxTokens;
+    }
+
     public ApiProfile copy() {
-        return new ApiProfile(id, name, baseUrl, apiKey, model);
+        return new ApiProfile(id, name, baseUrl, apiKey, model,
+                systemPrompt, temperature, topP, maxTokens);
     }
 
     public JSONObject toJson() {
@@ -80,6 +143,10 @@ public class ApiProfile {
             obj.put(JSON_BASE_URL, baseUrl);
             obj.put(JSON_API_KEY, apiKey);
             obj.put(JSON_MODEL, model);
+            obj.put(JSON_SYSTEM_PROMPT, systemPrompt);
+            obj.put(JSON_TEMPERATURE, temperature);
+            obj.put(JSON_TOP_P, topP);
+            obj.put(JSON_MAX_TOKENS, maxTokens);
         } catch (Exception ignored) {
             // 不会发生（key 均非空）
         }
@@ -99,6 +166,10 @@ public class ApiProfile {
                 obj.optString(JSON_NAME, ""),
                 obj.optString(JSON_BASE_URL, ""),
                 obj.optString(JSON_API_KEY, ""),
-                obj.optString(JSON_MODEL, ""));
+                obj.optString(JSON_MODEL, ""),
+                obj.optString(JSON_SYSTEM_PROMPT, ""),
+                (float) obj.optDouble(JSON_TEMPERATURE, VALUE_UNSET),
+                (float) obj.optDouble(JSON_TOP_P, VALUE_UNSET),
+                obj.optInt(JSON_MAX_TOKENS, MAX_TOKENS_UNLIMITED));
     }
 }

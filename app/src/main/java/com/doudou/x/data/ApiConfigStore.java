@@ -128,6 +128,30 @@ public class ApiConfigStore {
         return TextUtils.isEmpty(value) ? DEFAULT_MODEL : value;
     }
 
+    /** 当前配置的系统提示词，为空表示不下发 system 消息。 */
+    public String getSystemPrompt() {
+        ApiProfile profile = getActiveProfile();
+        return profile == null ? "" : profile.getSystemPrompt();
+    }
+
+    /** 当前配置的温度，负数表示使用服务端默认。 */
+    public float getTemperature() {
+        ApiProfile profile = getActiveProfile();
+        return profile == null ? ApiProfile.VALUE_UNSET : profile.getTemperature();
+    }
+
+    /** 当前配置的核采样，负数表示使用服务端默认。 */
+    public float getTopP() {
+        ApiProfile profile = getActiveProfile();
+        return profile == null ? ApiProfile.VALUE_UNSET : profile.getTopP();
+    }
+
+    /** 当前配置的最大 token，0 表示不限制。 */
+    public int getMaxTokens() {
+        ApiProfile profile = getActiveProfile();
+        return profile == null ? ApiProfile.MAX_TOKENS_UNLIMITED : profile.getMaxTokens();
+    }
+
     /** 开关打开且当前配置三项齐全时，才走真实接口。 */
     public boolean isReady() {
         return isEnabled() && isProfileReady(getActiveProfile());

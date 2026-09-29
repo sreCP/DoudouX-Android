@@ -42,6 +42,10 @@ public class ApiSettingsActivity extends AppCompatActivity {
     private EditText etBaseUrl;
     private EditText etApiKey;
     private EditText etModel;
+    private EditText etSystemPrompt;
+    private EditText etTemperature;
+    private EditText etTopP;
+    private EditText etMaxTokens;
     private TextView btnTest;
     private Spinner spinnerProfile;
     private TextView btnNewProfile;
@@ -69,6 +73,10 @@ public class ApiSettingsActivity extends AppCompatActivity {
         etBaseUrl = findViewById(R.id.etBaseUrl);
         etApiKey = findViewById(R.id.etApiKey);
         etModel = findViewById(R.id.etModel);
+        etSystemPrompt = findViewById(R.id.etSystemPrompt);
+        etTemperature = findViewById(R.id.etTemperature);
+        etTopP = findViewById(R.id.etTopP);
+        etMaxTokens = findViewById(R.id.etMaxTokens);
         TextView btnSave = findViewById(R.id.btnSaveApi);
         btnTest = findViewById(R.id.btnTestApi);
         spinnerProfile = findViewById(R.id.spinnerProfile);
@@ -196,6 +204,69 @@ public class ApiSettingsActivity extends AppCompatActivity {
         etBaseUrl.setText(profile.getBaseUrl());
         etApiKey.setText(profile.getApiKey());
         etModel.setText(profile.getModel());
+        etSystemPrompt.setText(profile.getSystemPrompt());
+        etTemperature.setText(profile.getTemperature() >= 0f
+                ? formatNumber(profile.getTemperature()) : "");
+        etTopP.setText(profile.getTopP() >= 0f ? formatNumber(profile.getTopP()) : "");
+        etMaxTokens.setText(profile.getMaxTokens() > 0
+                ? String.valueOf(profile.getMaxTokens()) : "");
+    }
+
+    /** 去掉 0.70 这类多余的 0，读起来更像手填的数值。 */
+    private static String formatNumber(float value) {
+        if (value == (long) value) {
+            return String.valueOf((long) value);
+        }
+        return String.valueOf(value);
+    }
+
+    /** 把表单里的模型参数写入配置；数值不合法时提示并返回 false。 */
+    private boolean applyModelParams(ApiProfile profile) {
+        String temperatureText = etTemperature.getText().toString().trim();
+        String topPText = etTopP.getText().toString().trim();
+        String maxTokensText = etMaxTokens.getText().toString().trim();
+
+        float temperature = ApiProfile.VALUE_UNSET;
+        if (!temperatureText.isEmpty()) {
+            try {
+                temperature = Float.parseFloat(temperatureText);
+            } catch (NumberFormatException e) {
+                temperature = Float.NaN;
+            }
+            if (Float.isNaN(temperature) || temperature < 0f || temperature > 2f) {
+                toast(getString(R.string.api_error_temperature));
+                return false;
+            }
+        }
+        float topP = ApiProfile.VALUE_UNSET;
+        if (!topPText.isEmpty()) {
+            try {
+                topP = Float.parseFloat(topPText);
+            } catch (NumberFormatException e) {
+                topP = Float.NaN;
+            }
+            if (Float.isNaN(topP) || topP < 0f || topP > 1f) {
+                toast(getString(R.string.api_error_top_p));
+                return false;
+            }
+        }
+        int maxTokens = ApiProfile.MAX_TOKENS_UNLIMITED;
+        if (!maxTokensText.isEmpty()) {
+            try {
+                maxTokens = Integer.parseInt(maxTokensText);
+            } catch (NumberFormatException e) {
+                maxTokens = 0;
+            }
+            if (maxTokens <= 0) {
+                toast(getString(R.string.api_error_max_tokens));
+                return false;
+            }
+        }
+        profile.setSystemPrompt(etSystemPrompt.getText().toString().trim());
+        profile.setTemperature(temperature);
+        profile.setTopP(topP);
+        profile.setMaxTokens(maxTokens);
+        return true;
     }
 
     private ApiProfile currentProfile() {
@@ -212,6 +283,8 @@ public class ApiSettingsActivity extends AppCompatActivity {
         profile.setBaseUrl(etBaseUrl.getText().toString().trim());
         profile.setApiKey(etApiKey.getText().toString().trim());
         profile.setModel(etModel.getText().toString().trim());
+        // 模型参数不合法时只提示，其余字段照常保存
+        applyModelParams(profile);
         config.saveProfile(profile);
     }
 
@@ -299,6 +372,11 @@ public class ApiSettingsActivity extends AppCompatActivity {
         }
         if (model.isEmpty()) {
             toast(getString(R.string.api_error_model));
+            return;
+        }
+        // 模型参数先校验，填错就不发起请求
+        ApiProfile probe = currentProfile();
+        if (probe != null && !applyModelParams(probe)) {
             return;
         }
         // 先用当前表单内容覆盖配置再测试（含未保存的修改），但不改动开关状态
@@ -408,8 +486,12 @@ public class ApiSettingsActivity extends AppCompatActivity {
             profile.setBaseUrl(baseUrl);
             profile.setApiKey(apiKey);
             profile.setModel(model);
-            config.saveProfile(profile);
         }
+        // 参数不合法时直接中止保存，避免把错误值写进去
+        if (!applyModelParams(profile)) {
+            return;
+        }
+        config.saveProfile(profile);
         toast(getString(R.string.api_saved));
         finish();
     }

@@ -64,6 +64,21 @@
     <string name="api_error_model">请填写模型名称</string>
     <string name="api_config_incomplete">API 配置不完整，本次仍使用模拟回复</string>
 
+    <!-- API 模型参数 -->
+    <string name="api_model_params_section">模型参数</string>
+    <string name="api_model_params_subtitle">留空的项不会下发给接口，使用服务端默认值</string>
+    <string name="api_system_prompt">系统提示词（System Prompt）</string>
+    <string name="api_system_prompt_hint">给模型设定角色、语气与回答风格，可留空</string>
+    <string name="api_temperature">温度（Temperature）</string>
+    <string name="api_temperature_hint">0 ~ 2，如 0.7；留空使用服务端默认</string>
+    <string name="api_top_p">核采样（Top P）</string>
+    <string name="api_top_p_hint">0 ~ 1，如 0.9；留空使用服务端默认</string>
+    <string name="api_max_tokens">最大输出 Token</string>
+    <string name="api_max_tokens_hint">留空表示不限制</string>
+    <string name="api_error_temperature">温度需填写 0 ~ 2 之间的数值</string>
+    <string name="api_error_top_p">Top P 需填写 0 ~ 1 之间的数值</string>
+    <string name="api_error_max_tokens">最大输出 Token 需为正整数</string>
+
     <!-- API 多套配置 -->
     <string name="api_profile_section">配置管理</string>
     <string name="api_profile_section_subtitle">可保存多套接口配置，随时切换使用哪一套</string>

@@ -217,6 +217,14 @@ public class OpenAiEngine implements AiEngine {
     private String buildRequestBody(List<ChatMessage> history) {
         try {
             JSONArray messages = new JSONArray();
+            // 系统提示词放在第一条，为空时不下发
+            String systemPrompt = config.getSystemPrompt();
+            if (systemPrompt != null && !systemPrompt.trim().isEmpty()) {
+                JSONObject system = new JSONObject();
+                system.put("role", "system");
+                system.put("content", systemPrompt);
+                messages.put(system);
+            }
             if (history != null) {
                 for (ChatMessage msg : history) {
                     String content = msg.getContent();
@@ -233,6 +241,19 @@ public class OpenAiEngine implements AiEngine {
             body.put("model", config.getModel());
             body.put("stream", true);
             body.put("messages", messages);
+            // 模型参数：未设置的不下发，交给服务端默认值
+            float temperature = config.getTemperature();
+            if (temperature >= 0f) {
+                body.put("temperature", temperature);
+            }
+            float topP = config.getTopP();
+            if (topP >= 0f) {
+                body.put("top_p", topP);
+            }
+            int maxTokens = config.getMaxTokens();
+            if (maxTokens > 0) {
+                body.put("max_tokens", maxTokens);
+            }
             return body.toString();
         } catch (Exception e) {
             throw new RuntimeException("请求体序列化失败：" + e.getMessage(), e);
