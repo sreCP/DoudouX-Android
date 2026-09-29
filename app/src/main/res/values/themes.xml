@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.DoudouX" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryVariant">@color/primary_dark</item>
+        <item name="colorOnPrimary">@color/text_on_primary</item>
+        <item name="colorSecondary">@color/accent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/bg_page</item>
+    </style>
+
+    <style name="Theme.DoudouX.Splash" parent="Theme.DoudouX">
+        <item name="android:windowBackground">@drawable/bg_splash_gradient</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>

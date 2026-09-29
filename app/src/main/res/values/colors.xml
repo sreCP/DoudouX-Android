@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#5B6BF0</color>
+    <color name="primary_dark">#4758D8</color>
+    <color name="primary_light">#EEF1FE</color>
+    <color name="accent">#875BFA</color>
+
+    <color name="splash_bg">#5F8DFB</color>
+
+    <color name="text_primary">#1F2430</color>
+    <color name="text_secondary">#6B7280</color>
+    <color name="text_hint">#9CA3AF</color>
+    <color name="text_on_primary">#FFFFFF</color>
+
+    <color name="bg_page">#F6F7FB</color>
+    <color name="bg_white">#FFFFFF</color>
+    <color name="bg_bubble_ai">#FFFFFF</color>
+    <color name="bg_input">#F1F3F9</color>
+    <color name="bg_drawer">#FFFFFF</color>
+    <color name="bg_history_item_active">#EDF0FE</color>
+
+    <color name="divider">#E5E7EB</color>
+    <color name="stroke_bubble">#E8EAf0</color>
+    <color name="danger">#E03131</color>
+</resources>

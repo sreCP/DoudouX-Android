@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/layoutDrawer"
+    android:layout_width="@dimen/drawer_width"
+    android:layout_height="match_parent"
+    android:layout_gravity="start"
+    android:background="@color/bg_drawer"
+    android:fitsSystemWindows="true"
+    android:orientation="vertical">
+
+    <!-- 顶部：Logo + 名称 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="20dp">
+
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/img_doudou_circle" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:text="@string/app_name"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- 新对话按钮 -->
+    <LinearLayout
+        android:id="@+id/btnNewChat"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:background="@drawable/bg_new_chat_button"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:contentDescription="@string/drawer_new_chat"
+            android:src="@drawable/ic_add" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="@string/drawer_new_chat"
+            android:textColor="@color/primary"
+            android:textSize="15sp" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="20dp"
+        android:layout_marginTop="20dp"
+        android:layout_marginBottom="8dp"
+        android:text="@string/drawer_history_title"
+        android:textColor="@color/text_hint"
+        android:textSize="12sp" />
+
+    <!-- 历史对话列表 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerHistory"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp" />
+
+    <TextView
+        android:id="@+id/tvHistoryEmpty"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="24dp"
+        android:text="@string/drawer_history_empty"
+        android:textColor="@color/text_hint"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/divider" />
+
+    <!-- 底部：账号 + 设置 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="8dp">
+
+        <LinearLayout
+            android:id="@+id/layoutAccount"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="?attr/selectableItemBackground"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:contentDescription="@string/settings_account"
+                android:src="@drawable/ic_avatar" />
+
+            <TextView
+                android:id="@+id/tvAccount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="138****0000"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btnSettings"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/drawer_settings"
+            android:src="@drawable/ic_settings" />
+    </LinearLayout>
+</LinearLayout>

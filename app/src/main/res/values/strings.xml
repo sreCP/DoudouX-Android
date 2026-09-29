@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">兜兜X</string>
+
+    <!-- Splash -->
+    <string name="splash_slogan">你的随身 AI 伙伴</string>
+
+    <!-- Login -->
+    <string name="login_welcome">欢迎使用兜兜X</string>
+    <string name="login_subtitle">登录后开启智能对话之旅</string>
+    <string name="login_phone_hint">请输入手机号</string>
+    <string name="login_code_hint">请输入验证码</string>
+    <string name="login_get_code">获取验证码</string>
+    <string name="login_code_mock_tip">演示版本，任意验证码均可登录</string>
+    <string name="login_button">登 录</string>
+    <string name="login_agreement">登录即代表同意《用户协议》与《隐私政策》</string>
+    <string name="login_error_phone">请输入正确的手机号</string>
+    <string name="login_error_code">请输入验证码</string>
+    <string name="login_code_sent">验证码已发送（演示：任意数字即可）</string>
+
+    <!-- Main / Chat -->
+    <string name="chat_title_default">新对话</string>
+    <string name="chat_input_hint">向兜兜X提问…</string>
+    <string name="chat_empty_title">有什么可以帮你的？</string>
+    <string name="chat_empty_subtitle">输入问题，兜兜X 会尽力回答</string>
+    <string name="drawer_new_chat">新对话</string>
+    <string name="drawer_history_title">历史对话</string>
+    <string name="drawer_history_empty">暂无历史对话</string>
+    <string name="drawer_settings">设置</string>
+    <string name="drawer_logout">退出登录</string>
+
+    <!-- Settings -->
+    <string name="settings_title">设置</string>
+    <string name="settings_account">账号</string>
+    <string name="settings_clear_history">清空历史对话</string>
+    <string name="settings_clear_history_done">历史对话已清空</string>
+    <string name="settings_version">版本</string>
+    <string name="settings_about">关于兜兜X</string>
+    <string name="settings_api_entry">AI 接口设置</string>
+    <string name="settings_api_status_mock">未启用（使用模拟回复）</string>
+    <string name="settings_api_status_real">已启用 · </string>
+
+    <!-- API Settings -->
+    <string name="api_settings_title">AI 接口设置</string>
+    <string name="api_enable">启用真实 AI 接口</string>
+    <string name="api_enable_subtitle">关闭时使用本地模拟回复</string>
+    <string name="api_base_url">接口地址（Base URL）</string>
+    <string name="api_base_url_hint">https://api.openai.com/v1</string>
+    <string name="api_key">API Key</string>
+    <string name="api_key_hint">sk-…</string>
+    <string name="api_model">模型（Model）</string>
+    <string name="api_model_hint">gpt-4o-mini</string>
+    <string name="api_save">保 存</string>
+    <string name="api_test">测试连接</string>
+    <string name="api_testing">正在测试…</string>
+    <string name="api_test_result_title">连接测试结果</string>
+    <string name="api_saved">已保存</string>
+    <string name="api_error_base_url">请填写接口地址</string>
+    <string name="api_error_key">请填写 API Key</string>
+    <string name="api_error_model">请填写模型名称</string>
+    <string name="api_config_incomplete">API 配置不完整，本次仍使用模拟回复</string>
+    <string name="api_desc">支持所有 OpenAI 兼容接口（/chat/completions，SSE 流式）。\n\n· 官方接口：https://api.openai.com/v1\n· DeepSeek：https://api.deepseek.com/v1\n· 其他兼容服务填写对应 Base URL 即可\n\n对话页中长按 AI 消息可查看接口原始返回。</string>
+
+    <!-- Raw response -->
+    <string name="raw_title">API 原始返回</string>
+    <string name="raw_empty">该消息来自本地模拟回复，没有 API 原始返回数据。</string>
+    <string name="action_copy">复制</string>
+    <string name="action_close">关闭</string>
+    <string name="copied">已复制到剪贴板</string>
+    <string name="action_back">返回</string>
+
+    <string name="logout_confirm_title">退出登录</string>
+    <string name="logout_confirm_message">确定要退出当前账号吗？</string>
+    <string name="action_confirm">确定</string>
+    <string name="action_cancel">取消</string>
+</resources>

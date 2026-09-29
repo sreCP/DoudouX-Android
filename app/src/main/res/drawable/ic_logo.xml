@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- 圆角底 -->
+    <path
+        android:fillColor="#4C6EF5"
+        android:pathData="M24,8 L72,8 Q88,8 88,24 L88,72 Q88,88 72,88 L24,88 Q8,88 8,72 L8,24 Q8,8 24,8 Z" />
+    <!-- 对话气泡 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,28 L66,28 Q72,28 72,34 L72,54 Q72,60 66,60 L44,60 L34,70 Q32,71.5 32,69 L32,60 L30,60 Q24,60 24,54 L24,34 Q24,28 30,28 Z" />
+    <!-- 眼睛 -->
+    <path
+        android:fillColor="#4C6EF5"
+        android:pathData="M38,40 m-3.2,0 a3.2,3.2 0 1,1 6.4,0 a3.2,3.2 0 1,1 -6.4,0" />
+    <path
+        android:fillColor="#4C6EF5"
+        android:pathData="M58,40 m-3.2,0 a3.2,3.2 0 1,1 6.4,0 a3.2,3.2 0 1,1 -6.4,0" />
+    <!-- 微笑 -->
+    <path
+        android:strokeColor="#4C6EF5"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M42,49 Q48,54 54,49" />
+</vector>

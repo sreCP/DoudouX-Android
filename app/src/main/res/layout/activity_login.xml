@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_white"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fitsSystemWindows="true"
+        android:orientation="vertical"
+        android:padding="32dp">
+
+        <ImageView
+            android:layout_width="120dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="40dp"
+            android:adjustViewBounds="true"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/img_doudou" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/login_welcome"
+            android:textColor="@color/text_primary"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/login_subtitle"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <EditText
+            android:id="@+id/etPhone"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="40dp"
+            android:background="@drawable/bg_input"
+            android:hint="@string/login_phone_hint"
+            android:importantForAutofill="no"
+            android:inputType="phone"
+            android:maxLength="11"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_hint"
+            android:textSize="15sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_input"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <EditText
+                android:id="@+id/etCode"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:hint="@string/login_code_hint"
+                android:importantForAutofill="no"
+                android:inputType="number"
+                android:maxLength="6"
+                android:paddingStart="20dp"
+                android:paddingEnd="8dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_hint"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/tvGetCode"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:paddingStart="16dp"
+                android:paddingEnd="20dp"
+                android:text="@string/login_get_code"
+                android:textColor="@color/primary"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvCodeTip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/login_code_mock_tip"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/btnLogin"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="32dp"
+            android:background="@drawable/bg_login_button"
+            android:gravity="center"
+            android:text="@string/login_button"
+            android:textColor="@color/text_on_primary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <ProgressBar
+            android:id="@+id/progressLogin"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="16dp"
+            android:indeterminateTint="@color/primary"
+            android:visibility="gone" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="48dp"
+            android:text="@string/login_agreement"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>
