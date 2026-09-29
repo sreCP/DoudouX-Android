@@ -88,13 +88,8 @@ public class MainActivity extends AppCompatActivity {
         initChatList();
         initDrawer();
 
-        // 恢复最近一段对话，否则开启新对话
-        List<Conversation> history = store.loadAll();
-        if (!history.isEmpty()) {
-            loadConversation(history.get(0));
-        } else {
-            startNewConversation();
-        }
+        // 每次打开都从全新对话开始；历史对话仍保留在侧边栏里
+        startNewConversation();
     }
 
     private void initViews() {

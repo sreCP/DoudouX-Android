@@ -20,6 +20,7 @@ import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.data.ConversationStore;
 import com.doudou.x.data.SessionManager;
 import com.doudou.x.data.UiSettingsStore;
+import com.doudou.x.model.ApiProfile;
 import com.doudou.x.ui.login.LoginActivity;
 
 /**
@@ -130,7 +131,10 @@ public class SettingsActivity extends AppCompatActivity {
     private void refreshApiStatus() {
         ApiConfigStore config = ApiConfigStore.getInstance(this);
         if (config.isReady()) {
-            tvApiStatus.setText(getString(R.string.settings_api_status_real) + config.getModel());
+            ApiProfile profile = config.getActiveProfile();
+            tvApiStatus.setText(getString(R.string.settings_api_status_real)
+                    + (profile == null ? config.getModel()
+                    : profile.getName() + " · " + profile.getModel()));
         } else if (config.isEnabled()) {
             tvApiStatus.setText(R.string.api_config_incomplete);
         } else {

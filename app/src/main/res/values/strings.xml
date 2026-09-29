@@ -47,7 +47,7 @@
     <!-- API Settings -->
     <string name="api_settings_title">AI 接口设置</string>
     <string name="api_enable">启用真实 AI 接口</string>
-    <string name="api_enable_subtitle">关闭时使用本地模拟回复</string>
+    <string name="api_enable_subtitle">关闭时使用本地模拟回复；开启时使用下方「当前配置」</string>
     <string name="api_base_url">接口地址（Base URL）</string>
     <string name="api_base_url_hint">https://api.openai.com/v1</string>
     <string name="api_key">API Key</string>
@@ -63,6 +63,22 @@
     <string name="api_error_key">请填写 API Key</string>
     <string name="api_error_model">请填写模型名称</string>
     <string name="api_config_incomplete">API 配置不完整，本次仍使用模拟回复</string>
+
+    <!-- API 多套配置 -->
+    <string name="api_profile_section">配置管理</string>
+    <string name="api_profile_section_subtitle">可保存多套接口配置，随时切换使用哪一套</string>
+    <string name="api_profile_new">新建配置</string>
+    <string name="api_profile_rename">重命名</string>
+    <string name="api_profile_delete">删除</string>
+    <string name="api_profile_name_hint">配置名称，如「DeepSeek」「公司网关」</string>
+    <string name="api_profile_default_name">默认配置</string>
+    <string name="api_profile_name_empty">请输入配置名称</string>
+    <string name="api_profile_created">已创建配置「%1$s」</string>
+    <string name="api_profile_switched">已切换到「%1$s」</string>
+    <string name="api_profile_deleted">已删除配置「%1$s」</string>
+    <string name="api_profile_delete_title">删除配置</string>
+    <string name="api_profile_delete_message">确定删除配置「%1$s」吗？删除后无法恢复。</string>
+    <string name="api_profile_keep_one">至少需要保留一套配置</string>
     <string name="api_desc">支持所有 OpenAI 兼容接口（/chat/completions，SSE 流式）。\n\n· 官方接口：https://api.openai.com/v1\n· DeepSeek：https://api.deepseek.com/v1\n· 其他兼容服务填写对应 Base URL 即可\n\n对话页中长按 AI 消息可查看接口原始返回。</string>
 
     <!-- Raw response -->

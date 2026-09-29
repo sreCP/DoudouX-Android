@@ -10,3 +10,6 @@
 .cxx
 local.properties
 app/build/
+
+# 本地语法检查临时目录
+.tmpcheck/

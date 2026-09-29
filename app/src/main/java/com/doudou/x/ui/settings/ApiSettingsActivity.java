@@ -5,10 +5,14 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -21,9 +25,16 @@ import com.doudou.x.R;
 import com.doudou.x.ai.AiEngine;
 import com.doudou.x.ai.OpenAiEngine;
 import com.doudou.x.data.ApiConfigStore;
+import com.doudou.x.model.ApiProfile;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * AI 接口设置页（OpenAI 兼容格式）：开关、Base URL、API Key、Model。
+ * AI 接口设置页（OpenAI 兼容格式）。
+ *
+ * 支持保存多套配置：顶部下拉切换「当前使用」的配置，并可新建 / 重命名 / 删除；
+ * 表单编辑的 Base URL、API Key、Model 都属于当前选中的那套配置。
  */
 public class ApiSettingsActivity extends AppCompatActivity {
 
@@ -32,9 +43,19 @@ public class ApiSettingsActivity extends AppCompatActivity {
     private EditText etApiKey;
     private EditText etModel;
     private TextView btnTest;
+    private Spinner spinnerProfile;
+    private TextView btnNewProfile;
+    private TextView btnRenameProfile;
+    private TextView btnDeleteProfile;
 
     private ApiConfigStore config;
     private OpenAiEngine engine;
+
+    private final List<ApiProfile> profiles = new ArrayList<>();
+    private ArrayAdapter<String> profileAdapter;
+    private String currentId;
+    /** 记录下拉当前位置，用于忽略 setSelection 触发的回弹回调。 */
+    private int spinnerPosition = -1;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -50,13 +71,16 @@ public class ApiSettingsActivity extends AppCompatActivity {
         etModel = findViewById(R.id.etModel);
         TextView btnSave = findViewById(R.id.btnSaveApi);
         btnTest = findViewById(R.id.btnTestApi);
+        spinnerProfile = findViewById(R.id.spinnerProfile);
+        btnNewProfile = findViewById(R.id.btnNewProfile);
+        btnRenameProfile = findViewById(R.id.btnRenameProfile);
+        btnDeleteProfile = findViewById(R.id.btnDeleteProfile);
         engine = new OpenAiEngine(config);
 
-        // 回填已保存配置
+        // 回填总开关
         switchEnable.setChecked(config.isEnabled());
-        etBaseUrl.setText(config.getBaseUrl());
-        etApiKey.setText(config.getApiKey());
-        etModel.setText(config.getModel());
+
+        initProfileSpinner();
 
         btnBack.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -76,6 +100,183 @@ public class ApiSettingsActivity extends AppCompatActivity {
                 testConnection();
             }
         });
+        btnNewProfile.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showNameDialog(getString(R.string.api_profile_new), "", false);
+            }
+        });
+        btnRenameProfile.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ApiProfile profile = currentProfile();
+                if (profile == null) {
+                    return;
+                }
+                showNameDialog(getString(R.string.api_profile_rename), profile.getName(), true);
+            }
+        });
+        btnDeleteProfile.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                confirmDelete();
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // 多套配置
+    // ------------------------------------------------------------------
+
+    private void initProfileSpinner() {
+        profileAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, new ArrayList<String>());
+        profileAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinnerProfile.setAdapter(profileAdapter);
+        spinnerProfile.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (position == spinnerPosition) {
+                    return; // setSelection 的回弹
+                }
+                if (position < 0 || position >= profiles.size()) {
+                    return;
+                }
+                spinnerPosition = position;
+                switchToProfile(position);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        refreshProfiles();
+    }
+
+    /** 重新读取配置列表，并回填到下拉与表单。 */
+    private void refreshProfiles() {
+        profiles.clear();
+        profiles.addAll(config.getProfiles());
+        if (profiles.isEmpty()) {
+            return;
+        }
+
+        List<String> names = new ArrayList<>();
+        int activeIndex = 0;
+        String activeId = config.getActiveProfileId();
+        for (int i = 0; i < profiles.size(); i++) {
+            ApiProfile profile = profiles.get(i);
+            names.add(profile.getName());
+            if (profile.getId().equals(activeId)) {
+                activeIndex = i;
+            }
+        }
+        profileAdapter.clear();
+        profileAdapter.addAll(names);
+        profileAdapter.notifyDataSetChanged();
+
+        // 定位到当前配置并回填表单
+        spinnerPosition = activeIndex;
+        spinnerProfile.setSelection(activeIndex, false);
+        currentId = profiles.get(activeIndex).getId();
+        bindForm(profiles.get(activeIndex));
+    }
+
+    private void switchToProfile(int position) {
+        // 先把当前表单内容落到原配置里，避免切换时丢失编辑
+        flushCurrentEdits();
+        ApiProfile target = profiles.get(position);
+        config.setActiveProfileId(target.getId());
+        currentId = target.getId();
+        bindForm(target);
+        toast(getString(R.string.api_profile_switched, target.getName()));
+    }
+
+    private void bindForm(ApiProfile profile) {
+        etBaseUrl.setText(profile.getBaseUrl());
+        etApiKey.setText(profile.getApiKey());
+        etModel.setText(profile.getModel());
+    }
+
+    private ApiProfile currentProfile() {
+        return config.findProfile(currentId);
+    }
+
+    /** 把表单内容写回当前配置（不校验、不关闭页面）。 */
+    private void flushCurrentEdits() {
+        config.setEnabled(switchEnable.isChecked());
+        ApiProfile profile = currentProfile();
+        if (profile == null) {
+            return;
+        }
+        profile.setBaseUrl(etBaseUrl.getText().toString().trim());
+        profile.setApiKey(etApiKey.getText().toString().trim());
+        profile.setModel(etModel.getText().toString().trim());
+        config.saveProfile(profile);
+    }
+
+    /** 新建 / 重命名配置时输入名称。 */
+    private void showNameDialog(final String title, String preset, final boolean rename) {
+        final EditText input = new EditText(this);
+        input.setText(preset == null ? "" : preset);
+        input.setHint(R.string.api_profile_name_hint);
+        input.setSingleLine(true);
+        input.setPadding(dp(16), dp(12), dp(16), dp(12));
+        if (!TextUtils.isEmpty(preset)) {
+            input.setSelection(preset.length());
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(input)
+                .setPositiveButton(R.string.action_confirm, (dialog, which) -> {
+                    String name = input.getText().toString().trim();
+                    if (name.isEmpty()) {
+                        toast(getString(R.string.api_profile_name_empty));
+                        return;
+                    }
+                    if (rename) {
+                        ApiProfile profile = currentProfile();
+                        if (profile == null) {
+                            return;
+                        }
+                        profile.setName(name);
+                        config.saveProfile(profile);
+                        refreshProfiles();
+                    } else {
+                        // 新建：先落盘当前编辑，再新建一套并切换过去
+                        flushCurrentEdits();
+                        ApiProfile created = config.createProfile(name,
+                                ApiConfigStore.DEFAULT_BASE_URL, "",
+                                ApiConfigStore.DEFAULT_MODEL);
+                        config.setActiveProfileId(created.getId());
+                        refreshProfiles();
+                        toast(getString(R.string.api_profile_created, name));
+                    }
+                })
+                .setNegativeButton(R.string.action_cancel, null)
+                .show();
+    }
+
+    private void confirmDelete() {
+        final ApiProfile profile = currentProfile();
+        if (profile == null) {
+            return;
+        }
+        if (config.getProfileCount() <= 1) {
+            toast(getString(R.string.api_profile_keep_one));
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.api_profile_delete_title)
+                .setMessage(getString(R.string.api_profile_delete_message, profile.getName()))
+                .setPositiveButton(R.string.action_confirm, (dialog, which) -> {
+                    config.deleteProfile(profile.getId());
+                    refreshProfiles();
+                    toast(getString(R.string.api_profile_deleted, profile.getName()));
+                })
+                .setNegativeButton(R.string.action_cancel, null)
+                .show();
     }
 
     /**
@@ -101,7 +302,8 @@ public class ApiSettingsActivity extends AppCompatActivity {
             return;
         }
         // 先用当前表单内容覆盖配置再测试（含未保存的修改），但不改动开关状态
-        config.save(enabled, baseUrl, apiKey, model);
+        flushCurrentEdits();
+        config.setEnabled(enabled);
 
         btnTest.setEnabled(false);
         btnTest.setText(R.string.api_testing);
@@ -144,7 +346,7 @@ public class ApiSettingsActivity extends AppCompatActivity {
 
     /** 通用长文本弹窗（等宽字体、可滚动、可复制）。 */
     private void showTextDialog(String title, final String content) {
-        int pad = (int) (16 * getResources().getDisplayMetrics().density + 0.5f);
+        int pad = dp(16);
         TextView textView = new TextView(this);
         textView.setText(content);
         textView.setTextSize(12);
@@ -196,13 +398,28 @@ public class ApiSettingsActivity extends AppCompatActivity {
             model = ApiConfigStore.DEFAULT_MODEL;
         }
 
-        config.save(enabled, baseUrl, apiKey, model);
+        config.setEnabled(enabled);
+        ApiProfile profile = currentProfile();
+        if (profile == null) {
+            profile = config.createProfile(getString(R.string.api_profile_default_name),
+                    baseUrl, apiKey, model);
+            config.setActiveProfileId(profile.getId());
+        } else {
+            profile.setBaseUrl(baseUrl);
+            profile.setApiKey(apiKey);
+            profile.setModel(model);
+            config.saveProfile(profile);
+        }
         toast(getString(R.string.api_saved));
         finish();
     }
 
     private void toast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
     @Override
