@@ -1,6 +1,7 @@
 package com.doudou.x.ui.chat;
 
 import android.content.Context;
+import android.graphics.Typeface;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -130,6 +131,84 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
         }
     }
 
+    /** 分级标题：## 一级标题 按级别递减字号，全部加粗。 */
+    private static View buildHeadingView(Context context, MarkdownParser.Block block) {
+        TextView textView = new TextView(context);
+        textView.setText(MarkdownInline.apply(block.text));
+        textView.setTextSize(headingTextSize(block.level));
+        textView.setTypeface(Typeface.DEFAULT_BOLD);
+        textView.setTextColor(context.getResources().getColor(R.color.text_primary));
+        textView.setLineSpacing(0f, 1.35f);
+        textView.setTextIsSelectable(true);
+        int extraTop = block.level <= 2 ? dp(context, 4) : dp(context, 2);
+        textView.setPadding(0, extraTop, 0, 0);
+        return textView;
+    }
+
+    private static float headingTextSize(int level) {
+        switch (level) {
+            case 1:
+                return 21f;
+            case 2:
+                return 19f;
+            case 3:
+                return 17f;
+            case 4:
+                return 16f;
+            default:
+                return 15f;
+        }
+    }
+
+    /** 无序列表：圆点符号 + 内容，支持按缩进分级的空心圆点。 */
+    private static View buildListView(Context context, MarkdownParser.Block block) {
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        if (block.items == null) {
+            return root;
+        }
+        for (MarkdownParser.ListItem item : block.items) {
+            root.addView(buildListItemView(context, item));
+        }
+        return root;
+    }
+
+    private static View buildListItemView(Context context, MarkdownParser.ListItem item) {
+        boolean nested = item.indent > 0;
+        LinearLayout row = new LinearLayout(context);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        row.setPadding(item.indent * dp(context, 16), 0, 0, 0);
+
+        TextView bullet = new TextView(context);
+        bullet.setText(nested ? "◦" : "•");
+        bullet.setTextSize(15);
+        bullet.setTextColor(nested ? 0xFFA9B1C0 : 0xFF8A93A6);
+        bullet.setLayoutParams(new LinearLayout.LayoutParams(dp(context, 16),
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        row.addView(bullet);
+
+        TextView content = new TextView(context);
+        content.setText(MarkdownInline.apply(item.text));
+        content.setTextSize(15);
+        content.setTextColor(context.getResources().getColor(R.color.text_primary));
+        content.setLineSpacing(0f, 1.4f);
+        content.setTextIsSelectable(true);
+        content.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(content);
+        return row;
+    }
+
+    private static int dp(Context context, int value) {
+        return (int) (value * context.getResources().getDisplayMetrics().density + 0.5f);
+    }
+
     static class MessageViewHolder extends RecyclerView.ViewHolder {
 
         private final Context context;
@@ -151,7 +230,7 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
                 return;
             }
 
-            // AI 消息：按 Markdown 结构渲染（文本段 + 代码块 + 表格）
+            // AI 消息：按 Markdown 结构渲染（文本 + 标题 + 列表 + 代码块 + 表格）
             messageBody.removeAllViews();
             List<MarkdownParser.Block> blocks = MarkdownParser.parse(message.getContent());
             int gap = (int) (context.getResources().getDisplayMetrics().density * 8 + 0.5f);
@@ -172,13 +251,17 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
                             });
                 } else if (block.type == MarkdownParser.TYPE_TABLE) {
                     blockView = TableBlockRenderer.render(context, block.table, renderMode);
+                } else if (block.type == MarkdownParser.TYPE_HEADING) {
+                    blockView = buildHeadingView(context, block);
+                } else if (block.type == MarkdownParser.TYPE_LIST) {
+                    blockView = buildListView(context, block);
                 } else {
                     TextView textView = new TextView(context);
                     String text = block.text;
                     if (isLast && message.isStreaming()) {
                         text = text + TYPING_CURSOR;
                     }
-                    textView.setText(text);
+                    textView.setText(MarkdownInline.apply(text));
                     textView.setTextSize(15);
                     textView.setTextColor(context.getResources().getColor(R.color.text_primary));
                     textView.setLineSpacing(0f, 1.4f);

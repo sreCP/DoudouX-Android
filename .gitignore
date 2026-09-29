@@ -13,3 +13,6 @@ app/build/
 
 # 本地语法检查临时目录
 .tmpcheck/
+
+# Android 工程内不提交任何 python 文件（脚本文件仅保留在本地）
+*.py

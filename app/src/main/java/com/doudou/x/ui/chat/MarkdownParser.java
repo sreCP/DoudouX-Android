@@ -4,19 +4,34 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 极简 Markdown 解析：识别 ``` 围栏代码块、GFM 表格，其余按纯文本输出。
+ * 极简 Markdown 解析：识别 ``` 围栏代码块、GFM 表格、分级标题、无序列表，
+ * 其余按纯文本输出。
  * 兼容流式输出场景——结尾未闭合的围栏会被当作代码块处理，
  * 表格在只收到表头+分隔行时也会先渲染出来。
+ * 行内 **加粗** 由 {@link MarkdownInline} 处理（标题、列表项、正文都支持）。
  */
 public class MarkdownParser {
 
     public static final int TYPE_TEXT = 0;
     public static final int TYPE_CODE = 1;
     public static final int TYPE_TABLE = 2;
+    public static final int TYPE_HEADING = 3;
+    public static final int TYPE_LIST = 4;
 
     public static final int ALIGN_LEFT = 0;
     public static final int ALIGN_CENTER = 1;
     public static final int ALIGN_RIGHT = 2;
+
+    /** 无序列表的一项：缩进层级（每 2 个空格算一级）+ 文本。 */
+    public static class ListItem {
+        public final int indent;
+        public final String text;
+
+        ListItem(int indent, String text) {
+            this.indent = indent;
+            this.text = text;
+        }
+    }
 
     /** GFM 表格数据：表头 + 数据行 + 每列对齐方式。 */
     public static class TableData {
@@ -42,24 +57,39 @@ public class MarkdownParser {
         public final String lang;
         /** TYPE_TABLE 时的表格数据，其余类型为 null。 */
         public final TableData table;
+        /** TYPE_HEADING 时的标题级别（1~6）。 */
+        public final int level;
+        /** TYPE_LIST 时的列表项。 */
+        public final List<ListItem> items;
 
-        Block(int type, String text, String lang, TableData table) {
+        Block(int type, String text, String lang, TableData table,
+              int level, List<ListItem> items) {
             this.type = type;
             this.text = text;
             this.lang = lang;
             this.table = table;
+            this.level = level;
+            this.items = items;
         }
 
         static Block text(String text) {
-            return new Block(TYPE_TEXT, text, null, null);
+            return new Block(TYPE_TEXT, text, null, null, 0, null);
         }
 
         static Block code(String code, String lang) {
-            return new Block(TYPE_CODE, code, lang, null);
+            return new Block(TYPE_CODE, code, lang, null, 0, null);
         }
 
         static Block table(List<String> header, List<List<String>> rows, int[] align) {
-            return new Block(TYPE_TABLE, null, null, new TableData(header, rows, align));
+            return new Block(TYPE_TABLE, null, null, new TableData(header, rows, align), 0, null);
+        }
+
+        static Block heading(int level, String text) {
+            return new Block(TYPE_HEADING, text, null, null, level, null);
+        }
+
+        static Block list(List<ListItem> items) {
+            return new Block(TYPE_LIST, null, null, null, 0, items);
         }
     }
 
@@ -106,7 +136,7 @@ public class MarkdownParser {
         return blocks;
     }
 
-    /** 把连续的非代码文本行切成「纯文本段 + 表格」。 */
+    /** 把连续的非代码文本行切成「纯文本段 + 标题 + 列表 + 表格」。 */
     private static void flushTextLines(List<Block> blocks, List<String> lines) {
         if (lines.isEmpty()) {
             return;
@@ -126,6 +156,27 @@ public class MarkdownParser {
                     i++;
                 }
                 blocks.add(Block.table(header, rows, align));
+            } else if (isHeading(lines.get(i))) {
+                flushTextBuf(blocks, buf);
+                blocks.add(Block.heading(headingLevel(lines.get(i)),
+                        headingText(lines.get(i))));
+                i++;
+            } else if (isListItem(lines.get(i))) {
+                flushTextBuf(blocks, buf);
+                List<ListItem> items = new ArrayList<>();
+                while (i < n) {
+                    if (isListItem(lines.get(i))) {
+                        items.add(parseListItem(lines.get(i)));
+                        i++;
+                    } else if (lines.get(i).trim().isEmpty()
+                            && i + 1 < n && isListItem(lines.get(i + 1))) {
+                        // 列表项之间的空隙，继续收集后面的项
+                        i++;
+                    } else {
+                        break;
+                    }
+                }
+                blocks.add(Block.list(items));
             } else {
                 if (buf.length() > 0) {
                     buf.append('\n');
@@ -159,6 +210,65 @@ public class MarkdownParser {
         blocks.add(Block.code(code.substring(0, end), lang));
         buf.setLength(0);
     }
+
+    // ------------------------------------------------------------------
+    // 标题 / 列表
+    // ------------------------------------------------------------------
+
+    /** 形如 ## 标题（1~6 个 # 后必须跟空格）。 */
+    private static boolean isHeading(String line) {
+        String t = line == null ? "" : line.trim();
+        if (!t.startsWith("#")) {
+            return false;
+        }
+        int i = 0;
+        while (i < t.length() && t.charAt(i) == '#') {
+            i++;
+        }
+        return i >= 1 && i <= 6 && i < t.length() && t.charAt(i) == ' ';
+    }
+
+    private static int headingLevel(String line) {
+        String t = line.trim();
+        int i = 0;
+        while (i < t.length() && t.charAt(i) == '#') {
+            i++;
+        }
+        return i;
+    }
+
+    private static String headingText(String line) {
+        String t = line.trim();
+        int i = 0;
+        while (i < t.length() && (t.charAt(i) == '#' || t.charAt(i) == ' ')) {
+            i++;
+        }
+        return t.substring(i).trim();
+    }
+
+    /** 形如 - 项目 / * 项目 / + 项目。 */
+    private static boolean isListItem(String line) {
+        String t = line == null ? "" : line.trim();
+        if (t.length() < 2) {
+            return false;
+        }
+        char c = t.charAt(0);
+        return (c == '-' || c == '*' || c == '+') && t.charAt(1) == ' ';
+    }
+
+    private static ListItem parseListItem(String line) {
+        String raw = line == null ? "" : line;
+        int spaces = 0;
+        while (spaces < raw.length() && raw.charAt(spaces) == ' ') {
+            spaces++;
+        }
+        int indent = spaces / 2;
+        return new ListItem(indent, raw.trim().substring(1).trim());
+    }
+
+    // ------------------------------------------------------------------
+    // 表格
+    // ------------------------------------------------------------------
 
     /** 当前行是表头、下一行是对齐分隔行时，认定为表格开始。 */
     private static boolean isTableStart(List<String> lines, int index) {

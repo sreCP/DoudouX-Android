@@ -111,9 +111,9 @@ public class OpenAiEngine implements AiEngine {
             lastEndpoint = endpoint;
             lastRequestBody = bodyJson;
             // 排查用日志：Logcat 过滤 DoudouX
-            Log.d(LOG_TAG, "POST " + endpoint);
-            Log.d(LOG_TAG, "Authorization: Bearer " + maskKey(config.getApiKey()));
-            Log.d(LOG_TAG, "RequestBody: " + bodyJson);
+            Log.d(LOG_TAG, "请求方式：POST，请求地址：" + endpoint);
+            Log.d(LOG_TAG, "鉴权头：Bearer " + maskKey(config.getApiKey()));
+            Log.d(LOG_TAG, "请求体：" + bodyJson);
 
             byte[] body = bodyJson.getBytes(StandardCharsets.UTF_8);
             OutputStream os = conn.getOutputStream();
@@ -122,11 +122,11 @@ public class OpenAiEngine implements AiEngine {
             os.close();
 
             int code = conn.getResponseCode();
-            Log.d(LOG_TAG, "HTTP " + code + " " + conn.getResponseMessage());
+            Log.d(LOG_TAG, "响应状态码：" + code + "，状态信息：" + conn.getResponseMessage());
             InputStream stream = code >= 200 && code < 300
                     ? conn.getInputStream() : conn.getErrorStream();
             if (stream == null) {
-                Log.e(LOG_TAG, "HTTP " + code + "，无响应体");
+                Log.e(LOG_TAG, "响应状态码：" + code + "，响应体为空");
                 notifyError(callback, "HTTP " + code + "，无响应体", raw.toString());
                 return;
             }
@@ -141,7 +141,8 @@ public class OpenAiEngine implements AiEngine {
                     return;
                 }
                 raw.append(line).append('\n');
-                Log.v(LOG_TAG, "sse| " + line);
+                // fixme 流式输出大量日志处
+                Log.v(LOG_TAG, "流| " + line);
                 if (!line.startsWith("data:")) {
                     continue; // 跳过 event:、注释、空行
                 }
@@ -159,7 +160,7 @@ public class OpenAiEngine implements AiEngine {
             reader.close();
 
             if (code < 200 || code >= 300) {
-                Log.e(LOG_TAG, "请求失败 HTTP " + code + " 响应体: " + raw);
+                Log.e(LOG_TAG, "请求失败，响应状态码：" + code + "，响应体：" + raw);
                 // 直接把服务端的 message 带出来，例如「model does not exist」
                 String serverMessage = extractServerMessage(raw.toString());
                 notifyError(callback, "HTTP " + code
@@ -172,7 +173,7 @@ public class OpenAiEngine implements AiEngine {
         } catch (Exception e) {
             if (!cancelled) {
                 String message = e.getMessage() != null ? e.getMessage() : e.toString();
-                Log.e(LOG_TAG, "请求异常: " + message, e);
+                Log.e(LOG_TAG, "请求异常：" + message, e);
                 notifyError(callback, "请求失败：" + message, raw.length() > 0 ? raw.toString() : null);
             }
         } finally {
