@@ -223,7 +223,7 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
         return textView;
     }
 
-    private class MessageViewHolder extends RecyclerView.ViewHolder {
+    public class MessageViewHolder extends RecyclerView.ViewHolder {
 
         private final Context context;
         private final TextView tvMessage;

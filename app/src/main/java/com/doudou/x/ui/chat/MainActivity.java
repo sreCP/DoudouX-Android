@@ -60,6 +60,8 @@ public class MainActivity extends AppCompatActivity {
 
     private AiEngine mockEngine;
     private OpenAiEngine openAiEngine;
+    /** 单独用于生成对话标题，避免与主对话的流式输出互相打断。 */
+    private OpenAiEngine titleEngine;
     private ApiConfigStore apiConfig;
     private UiSettingsStore uiSettings;
     private ConversationStore store;
@@ -83,6 +85,7 @@ public class MainActivity extends AppCompatActivity {
         uiSettings = UiSettingsStore.getInstance(this);
         mockEngine = new MockAiEngine();
         openAiEngine = new OpenAiEngine(apiConfig);
+        titleEngine = new OpenAiEngine(apiConfig);
 
         initViews();
         initChatList();
@@ -158,7 +161,7 @@ public class MainActivity extends AppCompatActivity {
 
         tvAccount.setText(session.getMaskedPhone());
 
-        historyAdapter = new HistoryAdapter(new HistoryAdapter.OnConversationClickListener() {
+        historyAdapter = new HistoryAdapter(new HistoryAdapter.OnConversationActionListener() {
             @Override
             public void onClick(Conversation conversation) {
                 loadConversation(conversation);
@@ -166,7 +169,12 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onLongClick(final Conversation conversation) {
+            public void onRename(Conversation conversation) {
+                showRenameDialog(conversation);
+            }
+
+            @Override
+            public void onDelete(Conversation conversation) {
                 confirmDeleteConversation(conversation);
             }
         });
@@ -209,6 +217,9 @@ public class MainActivity extends AppCompatActivity {
     private void cancelEngines() {
         mockEngine.cancel();
         openAiEngine.cancel();
+        if (titleEngine != null) {
+            titleEngine.cancel();
+        }
     }
 
     private void startNewConversation() {
@@ -299,11 +310,16 @@ public class MainActivity extends AppCompatActivity {
                 chatAdapter.updateLastMessage(finalText, thinkingText, false);
                 updateSendButtonState();
 
-                // 生成标题并持久化
+                // 先用首条提问兜底生成标题并持久化
                 currentConversation.deriveTitleIfNeeded();
                 tvTitle.setText(currentConversation.getTitle());
                 store.upsert(currentConversation);
                 refreshHistoryList();
+
+                // 成功后按需让模型生成摘要标题
+                if (!error) {
+                    maybeGenerateTitle(text, finalText);
+                }
             }
         });
     }
@@ -345,10 +361,45 @@ public class MainActivity extends AppCompatActivity {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
+    /** 侧边栏重命名按钮：修改历史对话标题。 */
+    private void showRenameDialog(final Conversation conversation) {
+        final EditText input = new EditText(this);
+        input.setText(conversation.getTitle());
+        input.setSingleLine(true);
+        input.setHint(R.string.history_rename_hint);
+        input.setPadding(dp(16), dp(12), dp(16), dp(12));
+        if (!TextUtils.isEmpty(conversation.getTitle())) {
+            input.setSelection(conversation.getTitle().length());
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.history_rename)
+                .setView(input)
+                .setPositiveButton(R.string.action_confirm, (dialog, which) -> {
+                    String name = input.getText().toString().trim();
+                    if (name.isEmpty()) {
+                        Toast.makeText(this, R.string.history_rename_empty, Toast.LENGTH_SHORT)
+                                .show();
+                        return;
+                    }
+                    conversation.setTitle(name);
+                    store.upsert(conversation);
+                    if (currentConversation != null
+                            && currentConversation.getId().equals(conversation.getId())) {
+                        tvTitle.setText(name);
+                    }
+                    refreshHistoryList();
+                })
+                .setNegativeButton(R.string.action_cancel, null)
+                .show();
+    }
+
+    /** 侧边栏删除按钮：二次确认后删除。 */
     private void confirmDeleteConversation(final Conversation conversation) {
         new AlertDialog.Builder(this)
-                .setMessage(conversation.getTitle())
-                .setPositiveButton("删除", (dialog, which) -> {
+                .setTitle(R.string.history_delete)
+                .setMessage(getString(R.string.history_delete_message, conversation.getTitle()))
+                .setPositiveButton(R.string.action_confirm, (dialog, which) -> {
                     store.delete(conversation.getId());
                     if (currentConversation != null
                             && currentConversation.getId().equals(conversation.getId())) {
@@ -359,6 +410,88 @@ public class MainActivity extends AppCompatActivity {
                 })
                 .setNegativeButton(R.string.action_cancel, null)
                 .show();
+    }
+
+    // ------------------------------------------------------------------
+    // 自动生成对话标题
+    // ------------------------------------------------------------------
+
+    /**
+     * 首次对话（一问一答）结束后，若开关打开且真实接口可用，
+     * 就让模型根据这一轮内容生成不超过 20 字的摘要作为标题。
+     */
+    private void maybeGenerateTitle(String userText, String aiText) {
+        if (!uiSettings.isAutoTitleEnabled() || !apiConfig.isReady()) {
+            return; // 开关关闭或未配置真实接口时，沿用首条用户消息
+        }
+        if (currentConversation == null || currentConversation.getMessages().size() > 2) {
+            return; // 只在第一轮对话后生成
+        }
+        if (TextUtils.isEmpty(userText) || TextUtils.isEmpty(aiText)) {
+            return;
+        }
+        // 截断超长内容，避免摘要请求本身消耗太多 token
+        String userPart = userText.length() > 300 ? userText.substring(0, 300) : userText;
+        String aiPart = aiText.length() > 800 ? aiText.substring(0, 800) : aiText;
+        String prompt = getString(R.string.auto_title_prompt, userPart, aiPart);
+        List<ChatMessage> request = new ArrayList<>();
+        request.add(new ChatMessage(ChatMessage.ROLE_USER, prompt));
+
+        titleEngine.streamReply(request, new AiEngine.StreamCallback() {
+            @Override
+            public void onStart() {
+            }
+
+            @Override
+            public void onToken(String fullText, String thinkingText) {
+            }
+
+            @Override
+            public void onComplete(String fullText, String thinkingText, String rawResponse) {
+                applyGeneratedTitle(fullText);
+            }
+
+            @Override
+            public void onError(String errorMessage, String rawResponse) {
+                // 生成失败就保留原标题，不影响对话本身
+            }
+        });
+    }
+
+    /** 清洗模型返回的标题文本并应用。 */
+    private void applyGeneratedTitle(String raw) {
+        if (currentConversation == null || TextUtils.isEmpty(raw)) {
+            return;
+        }
+        String title = raw.trim()
+                .replace("\n", " ")
+                .replace("\r", " ")
+                .replace("\"", "")
+                .replace("“", "")
+                .replace("”", "")
+                .replace("「", "")
+                .replace("」", "")
+                .replace("『", "")
+                .replace("』", "")
+                .trim();
+        // 去掉「摘要：」「标题：」这类前缀
+        String[] prefixes = {"对话摘要：", "对话标题：", "摘要：", "标题："};
+        for (String prefix : prefixes) {
+            if (title.startsWith(prefix)) {
+                title = title.substring(prefix.length()).trim();
+                break;
+            }
+        }
+        if (title.length() > 20) {
+            title = title.substring(0, 20);
+        }
+        if (title.isEmpty()) {
+            return;
+        }
+        currentConversation.setTitle(title);
+        tvTitle.setText(title);
+        store.upsert(currentConversation);
+        refreshHistoryList();
     }
 
     private void refreshHistoryList() {

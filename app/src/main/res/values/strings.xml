@@ -28,6 +28,11 @@
     <string name="chat_thinking_collapsed">▸ 思考过程（点击展开）</string>
     <string name="drawer_history_title">历史对话</string>
     <string name="drawer_history_empty">暂无历史对话</string>
+    <string name="history_rename">重命名对话</string>
+    <string name="history_rename_hint">输入新的对话名称</string>
+    <string name="history_rename_empty">请输入对话名称</string>
+    <string name="history_delete">删除对话</string>
+    <string name="history_delete_message">确定删除对话「%1$s」吗？删除后无法恢复。</string>
     <string name="drawer_settings">设置</string>
     <string name="drawer_logout">退出登录</string>
 
@@ -39,6 +44,11 @@
     <string name="settings_version">版本</string>
     <string name="settings_about">关于兜兜X</string>
     <string name="settings_api_entry">AI 接口设置</string>
+    <string name="settings_auto_title">自动生成对话标题</string>
+    <string name="settings_auto_title_subtitle_on">首次对话结束后调用模型生成不超过 20 字的摘要</string>
+    <string name="settings_auto_title_subtitle_off">关闭时使用第一条提问作为标题</string>
+    <string name="auto_title_prompt">请根据以下对话生成对话摘要，不超过20个字\n\n用户：%1$s\n\n助手：%2$s</string>
+
     <string name="settings_code_mode">代码块 / 表格换行渲染</string>
     <string name="settings_code_mode_subtitle_on">自动换行：代码块行间黑灰相间，表格压缩进一屏</string>
     <string name="settings_code_mode_subtitle_off">单行显示：横向滚动查看完整内容</string>

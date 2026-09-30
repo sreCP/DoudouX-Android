@@ -4,6 +4,7 @@ import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageButton;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -17,20 +18,23 @@ import java.util.List;
 
 /**
  * 侧边栏历史对话列表适配器。
+ * 点击条目进入对话，右侧两个按钮分别用于重命名与删除（不再使用长按）。
  */
 public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.HistoryViewHolder> {
 
-    public interface OnConversationClickListener {
+    public interface OnConversationActionListener {
         void onClick(Conversation conversation);
 
-        void onLongClick(Conversation conversation);
+        void onRename(Conversation conversation);
+
+        void onDelete(Conversation conversation);
     }
 
     private final List<Conversation> conversations = new ArrayList<>();
-    private final OnConversationClickListener listener;
+    private final OnConversationActionListener listener;
     private String selectedId;
 
-    public HistoryAdapter(OnConversationClickListener listener) {
+    public HistoryAdapter(OnConversationActionListener listener) {
         this.listener = listener;
     }
 
@@ -73,16 +77,25 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.HistoryV
                 }
             }
         });
-        holder.itemView.setOnLongClickListener(new View.OnLongClickListener() {
+        holder.btnRename.setOnClickListener(new View.OnClickListener() {
             @Override
-            public boolean onLongClick(View v) {
+            public void onClick(View v) {
                 if (listener != null) {
-                    listener.onLongClick(conversation);
-                    return true;
+                    listener.onRename(conversation);
                 }
-                return false;
             }
         });
+        holder.btnDelete.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (listener != null) {
+                    listener.onDelete(conversation);
+                }
+            }
+        });
+        // 明确取消长按响应
+        holder.itemView.setOnLongClickListener(null);
+        holder.itemView.setLongClickable(false);
     }
 
     @Override
@@ -93,10 +106,14 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.HistoryV
     static class HistoryViewHolder extends RecyclerView.ViewHolder {
 
         final TextView tvTitle;
+        final ImageButton btnRename;
+        final ImageButton btnDelete;
 
         HistoryViewHolder(@NonNull View itemView) {
             super(itemView);
             tvTitle = itemView.findViewById(R.id.tvConversationTitle);
+            btnRename = itemView.findViewById(R.id.btnRenameConversation);
+            btnDelete = itemView.findViewById(R.id.btnDeleteConversation);
         }
     }
 }

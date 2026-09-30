@@ -31,6 +31,8 @@ public class SettingsActivity extends AppCompatActivity {
     private TextView tvApiStatus;
     private SwitchCompat switchCodeWrap;
     private TextView tvCodeModeSubtitle;
+    private SwitchCompat switchAutoTitle;
+    private TextView tvAutoTitleSubtitle;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -75,6 +77,20 @@ public class SettingsActivity extends AppCompatActivity {
                                                  boolean isChecked) {
                         uiSettings.setCodeWrapEnabled(isChecked);
                         refreshCodeModeSubtitle();
+                    }
+                });
+
+        switchAutoTitle = findViewById(R.id.switchAutoTitle);
+        tvAutoTitleSubtitle = findViewById(R.id.tvAutoTitleSubtitle);
+        switchAutoTitle.setChecked(uiSettings.isAutoTitleEnabled());
+        refreshAutoTitleSubtitle();
+        switchAutoTitle.setOnCheckedChangeListener(
+                new android.widget.CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(android.widget.CompoundButton buttonView,
+                                                 boolean isChecked) {
+                        uiSettings.setAutoTitleEnabled(isChecked);
+                        refreshAutoTitleSubtitle();
                     }
                 });
 
@@ -125,6 +141,13 @@ public class SettingsActivity extends AppCompatActivity {
         tvCodeModeSubtitle.setText(switchCodeWrap.isChecked()
                 ? R.string.settings_code_mode_subtitle_on
                 : R.string.settings_code_mode_subtitle_off);
+    }
+
+    /** 显示自动生成标题开关的说明。 */
+    private void refreshAutoTitleSubtitle() {
+        tvAutoTitleSubtitle.setText(switchAutoTitle.isChecked()
+                ? R.string.settings_auto_title_subtitle_on
+                : R.string.settings_auto_title_subtitle_off);
     }
 
     /** 显示当前 AI 接口启用状态。 */

@@ -10,6 +10,7 @@ public class UiSettingsStore {
 
     private static final String PREF_NAME = "doudou_ui_settings";
     private static final String KEY_CODE_WRAP = "code_wrap_mode";
+    private static final String KEY_AUTO_TITLE = "auto_title_enabled";
 
     private static UiSettingsStore instance;
     private final SharedPreferences prefs;
@@ -33,5 +34,14 @@ public class UiSettingsStore {
 
     public void setCodeWrapEnabled(boolean enabled) {
         prefs.edit().putBoolean(KEY_CODE_WRAP, enabled).apply();
+    }
+
+    /** true = 首次对话结束后调用模型生成不超过 20 字的摘要作为标题。 */
+    public boolean isAutoTitleEnabled() {
+        return prefs.getBoolean(KEY_AUTO_TITLE, false);
+    }
+
+    public void setAutoTitleEnabled(boolean enabled) {
+        prefs.edit().putBoolean(KEY_AUTO_TITLE, enabled).apply();
     }
 }
