@@ -152,6 +152,18 @@ public class ApiConfigStore {
         return profile == null ? ApiProfile.MAX_TOKENS_UNLIMITED : profile.getMaxTokens();
     }
 
+    /** 是否每次把完整对话历史发给服务端（服务端自身不保存会话）。 */
+    public boolean isSendFullHistory() {
+        ApiProfile profile = getActiveProfile();
+        return profile == null || profile.isSendFullHistory();
+    }
+
+    /** 是否关闭模型思考（请求体下发 think=false）。 */
+    public boolean isDisableThinking() {
+        ApiProfile profile = getActiveProfile();
+        return profile != null && profile.isDisableThinking();
+    }
+
     /** 开关打开且当前配置三项齐全时，才走真实接口。 */
     public boolean isReady() {
         return isEnabled() && isProfileReady(getActiveProfile());

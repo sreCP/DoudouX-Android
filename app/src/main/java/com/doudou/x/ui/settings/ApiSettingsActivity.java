@@ -46,6 +46,8 @@ public class ApiSettingsActivity extends AppCompatActivity {
     private EditText etTemperature;
     private EditText etTopP;
     private EditText etMaxTokens;
+    private SwitchCompat switchSendFullHistory;
+    private SwitchCompat switchDisableThink;
     private TextView btnTest;
     private Spinner spinnerProfile;
     private TextView btnNewProfile;
@@ -77,6 +79,8 @@ public class ApiSettingsActivity extends AppCompatActivity {
         etTemperature = findViewById(R.id.etTemperature);
         etTopP = findViewById(R.id.etTopP);
         etMaxTokens = findViewById(R.id.etMaxTokens);
+        switchSendFullHistory = findViewById(R.id.switchSendFullHistory);
+        switchDisableThink = findViewById(R.id.switchDisableThink);
         TextView btnSave = findViewById(R.id.btnSaveApi);
         btnTest = findViewById(R.id.btnTestApi);
         spinnerProfile = findViewById(R.id.spinnerProfile);
@@ -210,6 +214,8 @@ public class ApiSettingsActivity extends AppCompatActivity {
         etTopP.setText(profile.getTopP() >= 0f ? formatNumber(profile.getTopP()) : "");
         etMaxTokens.setText(profile.getMaxTokens() > 0
                 ? String.valueOf(profile.getMaxTokens()) : "");
+        switchSendFullHistory.setChecked(profile.isSendFullHistory());
+        switchDisableThink.setChecked(profile.isDisableThinking());
     }
 
     /** 去掉 0.70 这类多余的 0，读起来更像手填的数值。 */
@@ -266,6 +272,8 @@ public class ApiSettingsActivity extends AppCompatActivity {
         profile.setTemperature(temperature);
         profile.setTopP(topP);
         profile.setMaxTokens(maxTokens);
+        profile.setSendFullHistory(switchSendFullHistory.isChecked());
+        profile.setDisableThinking(switchDisableThink.isChecked());
         return true;
     }
 
@@ -283,7 +291,9 @@ public class ApiSettingsActivity extends AppCompatActivity {
         profile.setBaseUrl(etBaseUrl.getText().toString().trim());
         profile.setApiKey(etApiKey.getText().toString().trim());
         profile.setModel(etModel.getText().toString().trim());
-        // 模型参数不合法时只提示，其余字段照常保存
+        // 开关类参数始终保存；模型参数不合法时只提示，其余字段照常保存
+        profile.setSendFullHistory(switchSendFullHistory.isChecked());
+        profile.setDisableThinking(switchDisableThink.isChecked());
         applyModelParams(profile);
         config.saveProfile(profile);
     }

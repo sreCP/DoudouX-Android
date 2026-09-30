@@ -78,6 +78,10 @@
     <string name="api_error_temperature">温度需填写 0 ~ 2 之间的数值</string>
     <string name="api_error_top_p">Top P 需填写 0 ~ 1 之间的数值</string>
     <string name="api_error_max_tokens">最大输出 Token 需为正整数</string>
+    <string name="api_send_full_history">每次发送完整对话历史</string>
+    <string name="api_send_full_history_subtitle">服务端不保存会话，多轮靠客户端回传；关闭后只发送当前这一句</string>
+    <string name="api_disable_think">关闭模型思考</string>
+    <string name="api_disable_think_subtitle">请求体下发 think=false，仅对支持该字段的服务端生效（如 Ollama）</string>
 
     <!-- API 多套配置 -->
     <string name="api_profile_section">配置管理</string>
@@ -94,7 +98,7 @@
     <string name="api_profile_delete_title">删除配置</string>
     <string name="api_profile_delete_message">确定删除配置「%1$s」吗？删除后无法恢复。</string>
     <string name="api_profile_keep_one">至少需要保留一套配置</string>
-    <string name="api_desc">支持所有 OpenAI 兼容接口（/chat/completions，SSE 流式）。\n\n· 官方接口：https://api.openai.com/v1\n· DeepSeek：https://api.deepseek.com/v1\n· 其他兼容服务填写对应 Base URL 即可\n\n对话页中长按 AI 消息可查看接口原始返回。</string>
+    <string name="api_desc">支持所有 OpenAI 兼容接口（/chat/completions，SSE 流式）。\n\n· 官方接口：https://api.openai.com/v1\n· DeepSeek：https://api.deepseek.com/v1\n· 本机 Ollama：http://10.0.2.2:11434/v1（模拟器）；真机填电脑局域网 IP，如 http://192.168.1.10:11434/v1\n· 其他兼容服务填写对应 Base URL 即可\n\n说明：Ollama 这类服务端不保存会话，多轮对话依赖「每次发送完整对话历史」开关；模型空闲会被卸载，KV cache 不会保留。\n\n对话页中长按 AI 消息可查看接口原始返回。</string>
 
     <!-- Raw response -->
     <string name="raw_title">API 原始返回</string>

@@ -213,9 +213,26 @@ public class OpenAiEngine implements AiEngine {
         return key.substring(0, 6) + "***" + key.substring(key.length() - 4);
     }
 
-    /** 构造 OpenAI 兼容请求体（完整多轮上下文）。 */
+    /** 构造 OpenAI 兼容请求体（默认带完整多轮上下文）。 */
     private String buildRequestBody(List<ChatMessage> history) {
         try {
+            // 服务端不保存会话：完整历史由客户端每次回传；
+            // 关闭该开关时只发送当前这一句，用于省流或单轮问答场景
+            List<ChatMessage> toSend = history;
+            if (!config.isSendFullHistory() && history != null) {
+                ChatMessage lastUser = null;
+                for (int i = history.size() - 1; i >= 0; i--) {
+                    if (history.get(i).getRole() == ChatMessage.ROLE_USER) {
+                        lastUser = history.get(i);
+                        break;
+                    }
+                }
+                if (lastUser != null) {
+                    toSend = new ArrayList<>();
+                    toSend.add(lastUser);
+                }
+            }
+
             JSONArray messages = new JSONArray();
             // 系统提示词放在第一条，为空时不下发
             String systemPrompt = config.getSystemPrompt();
@@ -225,8 +242,8 @@ public class OpenAiEngine implements AiEngine {
                 system.put("content", systemPrompt);
                 messages.put(system);
             }
-            if (history != null) {
-                for (ChatMessage msg : history) {
+            if (toSend != null) {
+                for (ChatMessage msg : toSend) {
                     String content = msg.getContent();
                     if (content == null || content.isEmpty()) {
                         continue; // 跳过占位中的空 AI 消息
@@ -253,6 +270,10 @@ public class OpenAiEngine implements AiEngine {
             int maxTokens = config.getMaxTokens();
             if (maxTokens > 0) {
                 body.put("max_tokens", maxTokens);
+            }
+            // 关闭模型思考（Ollama 等服务端支持该字段）
+            if (config.isDisableThinking()) {
+                body.put("think", false);
             }
             return body.toString();
         } catch (Exception e) {

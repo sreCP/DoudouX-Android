@@ -25,6 +25,8 @@ public class ApiProfile {
     private static final String JSON_TEMPERATURE = "temperature";
     private static final String JSON_TOP_P = "topP";
     private static final String JSON_MAX_TOKENS = "maxTokens";
+    private static final String JSON_SEND_FULL_HISTORY = "sendFullHistory";
+    private static final String JSON_DISABLE_THINKING = "disableThinking";
 
     private String id;
     private String name;
@@ -35,6 +37,10 @@ public class ApiProfile {
     private float temperature;
     private float topP;
     private int maxTokens;
+    /** 是否每次把完整对话历史发给服务端（服务端本身不保存会话）。 */
+    private boolean sendFullHistory;
+    /** 是否关闭模型思考（请求体下发 think=false）。 */
+    private boolean disableThinking;
 
     public ApiProfile(String id, String name, String baseUrl, String apiKey, String model) {
         this(id, name, baseUrl, apiKey, model, "", VALUE_UNSET, VALUE_UNSET,
@@ -52,6 +58,26 @@ public class ApiProfile {
         this.temperature = temperature;
         this.topP = topP;
         this.maxTokens = maxTokens;
+        this.sendFullHistory = true;
+        this.disableThinking = false;
+    }
+
+    /** 是否每次发送完整对话历史，默认开启。 */
+    public boolean isSendFullHistory() {
+        return sendFullHistory;
+    }
+
+    public void setSendFullHistory(boolean sendFullHistory) {
+        this.sendFullHistory = sendFullHistory;
+    }
+
+    /** 是否关闭模型思考（下发 think=false），默认不关闭。 */
+    public boolean isDisableThinking() {
+        return disableThinking;
+    }
+
+    public void setDisableThinking(boolean disableThinking) {
+        this.disableThinking = disableThinking;
     }
 
     public String getId() {
@@ -131,8 +157,11 @@ public class ApiProfile {
     }
 
     public ApiProfile copy() {
-        return new ApiProfile(id, name, baseUrl, apiKey, model,
+        ApiProfile copy = new ApiProfile(id, name, baseUrl, apiKey, model,
                 systemPrompt, temperature, topP, maxTokens);
+        copy.setSendFullHistory(sendFullHistory);
+        copy.setDisableThinking(disableThinking);
+        return copy;
     }
 
     public JSONObject toJson() {
@@ -147,6 +176,8 @@ public class ApiProfile {
             obj.put(JSON_TEMPERATURE, temperature);
             obj.put(JSON_TOP_P, topP);
             obj.put(JSON_MAX_TOKENS, maxTokens);
+            obj.put(JSON_SEND_FULL_HISTORY, sendFullHistory);
+            obj.put(JSON_DISABLE_THINKING, disableThinking);
         } catch (Exception ignored) {
             // 不会发生（key 均非空）
         }
@@ -161,7 +192,7 @@ public class ApiProfile {
         if (id == null || id.isEmpty()) {
             return null;
         }
-        return new ApiProfile(
+        ApiProfile profile = new ApiProfile(
                 id,
                 obj.optString(JSON_NAME, ""),
                 obj.optString(JSON_BASE_URL, ""),
@@ -171,5 +202,8 @@ public class ApiProfile {
                 (float) obj.optDouble(JSON_TEMPERATURE, VALUE_UNSET),
                 (float) obj.optDouble(JSON_TOP_P, VALUE_UNSET),
                 obj.optInt(JSON_MAX_TOKENS, MAX_TOKENS_UNLIMITED));
+        profile.setSendFullHistory(obj.optBoolean(JSON_SEND_FULL_HISTORY, true));
+        profile.setDisableThinking(obj.optBoolean(JSON_DISABLE_THINKING, false));
+        return profile;
     }
 }
