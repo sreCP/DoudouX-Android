@@ -401,11 +401,11 @@ public class ApiSettingsActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onToken(String fullText) {
+            public void onToken(String fullText, String thinkingText) {
             }
 
             @Override
-            public void onComplete(String fullText, String rawResponse) {
+            public void onComplete(String fullText, String thinkingText, String rawResponse) {
                 showTestResult(true, null, rawResponse);
             }
 

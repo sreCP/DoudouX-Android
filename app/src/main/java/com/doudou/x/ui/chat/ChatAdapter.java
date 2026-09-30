@@ -2,6 +2,7 @@ package com.doudou.x.ui.chat;
 
 import android.content.Context;
 import android.graphics.Typeface;
+import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -68,14 +69,15 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
         notifyItemInserted(messages.size() - 1);
     }
 
-    /** 流式更新最后一条 AI 消息的内容。 */
-    public void updateLastMessage(String text, boolean streaming) {
+    /** 流式更新最后一条 AI 消息的内容（正文 + 思考过程）。 */
+    public void updateLastMessage(String text, String thinking, boolean streaming) {
         if (messages.isEmpty()) {
             return;
         }
         int lastIndex = messages.size() - 1;
         ChatMessage last = messages.get(lastIndex);
         last.setContent(text);
+        last.setThinking(thinking);
         last.setStreaming(streaming);
         notifyItemChanged(lastIndex, PAYLOAD_TEXT);
     }
@@ -209,7 +211,19 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
         return (int) (value * context.getResources().getDisplayMetrics().density + 0.5f);
     }
 
-    static class MessageViewHolder extends RecyclerView.ViewHolder {
+    /** 非静态内部类：思考块展开/收起时需要回调 Adapter 刷新当前项。 */
+    /** 错误信息：⚠️ 前缀 + 警示色，提示这只是本地报错，不会进入上下文。 */
+    private static View buildErrorView(Context context, String text) {
+        TextView textView = new TextView(context);
+        textView.setText("⚠️ " + (text == null ? "" : text));
+        textView.setTextSize(14);
+        textView.setTextColor(context.getResources().getColor(R.color.danger));
+        textView.setLineSpacing(0f, 1.35f);
+        textView.setTextIsSelectable(true);
+        return textView;
+    }
+
+    private class MessageViewHolder extends RecyclerView.ViewHolder {
 
         private final Context context;
         private final TextView tvMessage;
@@ -232,6 +246,18 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
 
             // AI 消息：按 Markdown 结构渲染（文本 + 标题 + 列表 + 代码块 + 表格）
             messageBody.removeAllViews();
+
+            if (message.isError()) {
+                // 错误信息用醒目的样式单独展示，且不会作为上下文回传给接口
+                messageBody.addView(buildErrorView(context, message.getContent()));
+                return;
+            }
+
+            // 思考过程（字体更小、颜色更浅、可折叠）
+            if (!TextUtils.isEmpty(message.getThinking())) {
+                messageBody.addView(buildThinkingView(message));
+            }
+
             List<MarkdownParser.Block> blocks = MarkdownParser.parse(message.getContent());
             int gap = (int) (context.getResources().getDisplayMetrics().density * 8 + 0.5f);
             for (int i = 0; i < blocks.size(); i++) {
@@ -287,6 +313,54 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
                 cursor.setTextColor(context.getResources().getColor(R.color.text_primary));
                 messageBody.addView(cursor);
             }
+        }
+
+        /** 思考过程块：可点击折叠，正文小字号 + 浅色 + 浅灰底。 */
+        private View buildThinkingView(final ChatMessage message) {
+            float density = context.getResources().getDisplayMetrics().density;
+            LinearLayout root = new LinearLayout(context);
+            root.setOrientation(LinearLayout.VERTICAL);
+            root.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT));
+
+            // 还没有正式回答时默认展开，避免看起来「没有输出」
+            final boolean expanded = message.isThinkingExpanded()
+                    || TextUtils.isEmpty(message.getContent());
+
+            TextView header = new TextView(context);
+            header.setText(expanded
+                    ? context.getString(R.string.chat_thinking_expanded)
+                    : context.getString(R.string.chat_thinking_collapsed));
+            header.setTextSize(12);
+            header.setTextColor(context.getResources().getColor(R.color.text_secondary));
+            header.setPadding(0, (int) (2 * density + 0.5f), 0, (int) (4 * density + 0.5f));
+            header.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    message.setThinkingExpanded(!expanded);
+                    int position = getBindingAdapterPosition();
+                    if (position != RecyclerView.NO_POSITION) {
+                        notifyItemChanged(position, PAYLOAD_TEXT);
+                    }
+                }
+            });
+            root.addView(header);
+
+            if (expanded) {
+                TextView body = new TextView(context);
+                body.setText(message.getThinking());
+                body.setTextSize(12);
+                body.setTextColor(context.getResources().getColor(R.color.text_hint));
+                body.setLineSpacing(0f, 1.35f);
+                int padH = (int) (8 * density + 0.5f);
+                int padV = (int) (6 * density + 0.5f);
+                body.setPadding(padH, padV, padH, padV);
+                body.setBackgroundResource(R.drawable.bg_thinking_block);
+                body.setTextIsSelectable(true);
+                root.addView(body);
+            }
+            return root;
         }
     }
 }

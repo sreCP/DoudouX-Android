@@ -67,7 +67,7 @@ public class MockAiEngine implements AiEngine {
             return;
         }
         if (index[0] >= tokens.size()) {
-            callback.onComplete(accumulated.toString(), null);
+            callback.onComplete(accumulated.toString(), null, null);
             return;
         }
         long delay = TOKEN_MIN_DELAY_MS
@@ -80,7 +80,7 @@ public class MockAiEngine implements AiEngine {
                 }
                 accumulated.append(tokens.get(index[0]));
                 index[0]++;
-                callback.onToken(accumulated.toString());
+                callback.onToken(accumulated.toString(), null);
                 scheduleNextToken(tokens, index, accumulated, callback);
             }
         };

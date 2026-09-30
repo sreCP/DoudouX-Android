@@ -24,6 +24,8 @@
     <string name="chat_empty_title">有什么可以帮你的？</string>
     <string name="chat_empty_subtitle">输入问题，兜兜X 会尽力回答</string>
     <string name="drawer_new_chat">新对话</string>
+    <string name="chat_thinking_expanded">▾ 思考过程（点击收起）</string>
+    <string name="chat_thinking_collapsed">▸ 思考过程（点击展开）</string>
     <string name="drawer_history_title">历史对话</string>
     <string name="drawer_history_empty">暂无历史对话</string>
     <string name="drawer_settings">设置</string>

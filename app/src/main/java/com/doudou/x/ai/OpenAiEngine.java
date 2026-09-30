@@ -95,6 +95,8 @@ public class OpenAiEngine implements AiEngine {
     private void doRequest(List<ChatMessage> history, StreamCallback callback) {
         final StringBuilder raw = new StringBuilder();
         final StringBuilder answer = new StringBuilder();
+        // 思考型模型（reasoning / reasoning_content）的思考过程，单独累积
+        final StringBuilder reasoning = new StringBuilder();
         try {
             String endpoint = config.getBaseUrl().replaceAll("/+$", "") + "/chat/completions";
             HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();
@@ -142,8 +144,34 @@ public class OpenAiEngine implements AiEngine {
                 }
                 raw.append(line).append('\n');
                 // fixme 流式输出大量日志处
-                Log.v(LOG_TAG, "流| " + line);
+                // SSE 每个事件之间会有一个空行，空行不打印，避免刷屏
+                if (!line.trim().isEmpty()) {
+                    Log.v(LOG_TAG, "流| " + line);
+                }
                 if (!line.startsWith("data:")) {
+                    // 兼容 Ollama 原生接口（/api/chat、/api/generate）直接返回的 NDJSON
+                    String jsonLine = line.trim();
+                    if (jsonLine.startsWith("{")) {
+                        String[] nativeDelta = parseNativeChunk(jsonLine);
+                        if (nativeDelta != null) {
+                            boolean changed = false;
+                            if (!nativeDelta[0].isEmpty()) {
+                                answer.append(nativeDelta[0]);
+                                changed = true;
+                            }
+                            if (!nativeDelta[1].isEmpty()) {
+                                reasoning.append(nativeDelta[1]);
+                                changed = true;
+                            }
+                    if (changed) {
+                        notifyToken(callback, answer.toString(), reasoning.toString());
+                    }
+                    if (isNativeDone(jsonLine)) {
+                                done = true;
+                                break;
+                            }
+                        }
+                    }
                     continue; // 跳过 event:、注释、空行
                 }
                 String payload = line.substring(5).trim();
@@ -151,10 +179,22 @@ public class OpenAiEngine implements AiEngine {
                     done = true;
                     break;
                 }
-                String delta = parseDeltaContent(payload);
-                if (delta != null && !delta.isEmpty()) {
-                    answer.append(delta);
-                    notifyToken(callback, answer.toString());
+                // 兼容思考型模型（Ollama / Qwen3 等）：
+                // delta.content 为正式回答，delta.reasoning 为思考过程
+                String[] delta = parseDelta(payload);
+                if (delta != null) {
+                    boolean changed = false;
+                    if (!delta[0].isEmpty()) {
+                        answer.append(delta[0]);
+                        changed = true;
+                    }
+                    if (!delta[1].isEmpty()) {
+                        reasoning.append(delta[1]);
+                        changed = true;
+                    }
+                    if (changed) {
+                        notifyToken(callback, answer.toString(), reasoning.toString());
+                    }
                 }
             }
             reader.close();
@@ -165,10 +205,11 @@ public class OpenAiEngine implements AiEngine {
                 String serverMessage = extractServerMessage(raw.toString());
                 notifyError(callback, "HTTP " + code
                         + (serverMessage == null ? "" : " · " + serverMessage), raw.toString());
-            } else if (answer.length() == 0) {
+            } else if (answer.length() == 0 && reasoning.length() == 0) {
                 notifyError(callback, done ? "响应内容为空" : "流意外中断", raw.toString());
             } else {
-                notifyComplete(callback, answer.toString(), raw.toString());
+                // 正式回答与思考过程分开回传，由界面决定怎么展示
+                notifyComplete(callback, answer.toString(), reasoning.toString(), raw.toString());
             }
         } catch (Exception e) {
             if (!cancelled) {
@@ -248,6 +289,9 @@ public class OpenAiEngine implements AiEngine {
                     if (content == null || content.isEmpty()) {
                         continue; // 跳过占位中的空 AI 消息
                     }
+                    if (msg.isError()) {
+                        continue; // 错误信息是本地提示，不能作为上下文回传
+                    }
                     JSONObject item = new JSONObject();
                     item.put("role", msg.getRole() == ChatMessage.ROLE_USER ? "user" : "assistant");
                     item.put("content", content);
@@ -281,8 +325,13 @@ public class OpenAiEngine implements AiEngine {
         }
     }
 
-    /** 解析一行 SSE data：取 choices[0].delta.content。 */
-    private String parseDeltaContent(String payload) {
+    /**
+     * 解析一行 SSE data，取 choices[0].delta 的两类增量。
+     *
+     * @return 长度为 2 的数组：[0] 正式回答 content，[1] 思考过程 reasoning；
+     * 没有增量时返回 null，某一类没有增量时对应位置为空字符串。
+     */
+    private String[] parseDelta(String payload) {
         try {
             JSONObject obj = new JSONObject(payload);
             JSONArray choices = obj.optJSONArray("choices");
@@ -293,9 +342,57 @@ public class OpenAiEngine implements AiEngine {
             if (delta == null) {
                 return null;
             }
-            return delta.optString("content", null);
+            String content = delta.optString("content", null);
+            String reasoningText = delta.optString("reasoning", null);
+            if (reasoningText == null || reasoningText.isEmpty()) {
+                // 部分服务端（如 DeepSeek）使用 reasoning_content
+                reasoningText = delta.optString("reasoning_content", null);
+            }
+            return new String[]{
+                    content == null ? "" : content,
+                    reasoningText == null ? "" : reasoningText};
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /**
+     * 解析 Ollama 原生接口一行 NDJSON（/api/chat 的 message.content、
+     * /api/generate 的 response），返回 [回答, 思考过程]；不是这类数据返回 null。
+     */
+    private String[] parseNativeChunk(String line) {
+        try {
+            JSONObject obj = new JSONObject(line);
+            String content = null;
+            String thinking = null;
+            JSONObject message = obj.optJSONObject("message");
+            if (message != null) {
+                content = message.optString("content", null);
+                thinking = message.optString("thinking", null);
+            }
+            if (content == null) {
+                content = obj.optString("response", null); // /api/generate
+            }
+            if (thinking == null) {
+                thinking = obj.optString("thinking", null);
+            }
+            if (content == null && thinking == null) {
+                return null;
+            }
+            return new String[]{
+                    content == null ? "" : content,
+                    thinking == null ? "" : thinking};
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Ollama 原生接口用 done=true 标记结束。 */
+    private boolean isNativeDone(String line) {
+        try {
+            return new JSONObject(line).optBoolean("done", false);
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -314,24 +411,25 @@ public class OpenAiEngine implements AiEngine {
         });
     }
 
-    private void notifyToken(final StreamCallback callback, final String fullText) {
+    private void notifyToken(final StreamCallback callback, final String fullText,
+                             final String thinkingText) {
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
                 if (!cancelled) {
-                    callback.onToken(fullText);
+                    callback.onToken(fullText, thinkingText);
                 }
             }
         });
     }
 
-    private void notifyComplete(final StreamCallback callback,
-                                final String fullText, final String raw) {
+    private void notifyComplete(final StreamCallback callback, final String fullText,
+                                final String thinkingText, final String raw) {
         mainHandler.post(new Runnable() {
             @Override
             public void run() {
                 if (!cancelled) {
-                    callback.onComplete(fullText, raw);
+                    callback.onComplete(fullText, thinkingText, raw);
                 }
             }
         });

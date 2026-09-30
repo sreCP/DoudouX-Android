@@ -274,25 +274,29 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onToken(String fullText) {
-                chatAdapter.updateLastMessage(fullText, true);
+            public void onToken(String fullText, String thinkingText) {
+                chatAdapter.updateLastMessage(fullText, thinkingText, true);
                 scrollToBottom();
             }
 
             @Override
-            public void onComplete(String fullText, String rawResponse) {
-                finishStreaming(fullText, rawResponse);
+            public void onComplete(String fullText, String thinkingText, String rawResponse) {
+                finishStreaming(fullText, thinkingText, rawResponse, false);
             }
 
             @Override
             public void onError(String errorMessage, String rawResponse) {
-                finishStreaming("⚠️ " + errorMessage, rawResponse);
+                // 标记成错误信息：界面单独展示，且不会作为上下文回传给接口
+                finishStreaming(errorMessage, null, rawResponse, true);
             }
 
-            private void finishStreaming(String finalText, String rawResponse) {
+            private void finishStreaming(String finalText, String thinkingText,
+                                         String rawResponse, boolean error) {
                 streaming = false;
                 aiMessage.setRawResponse(rawResponse);
-                chatAdapter.updateLastMessage(finalText, false);
+                aiMessage.setThinking(thinkingText);
+                aiMessage.setError(error);
+                chatAdapter.updateLastMessage(finalText, thinkingText, false);
                 updateSendButtonState();
 
                 // 生成标题并持久化

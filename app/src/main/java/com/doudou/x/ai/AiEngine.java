@@ -14,16 +14,22 @@ public interface AiEngine {
         /** 第一个 token 到来前调用（"思考中"阶段结束）。 */
         void onStart();
 
-        /** @param fullText 到目前为止累计的完整文本 */
-        void onToken(String fullText);
+        /**
+         * 流式增量。
+         *
+         * @param fullText     到目前为止累计的正式回答
+         * @param thinkingText 到目前为止累计的思考过程（可能为 null / 空）
+         */
+        void onToken(String fullText, String thinkingText);
 
         /**
          * 正常结束。
          *
-         * @param fullText    完整回答文本
-         * @param rawResponse API 原始返回字符串（模拟引擎为 null）
+         * @param fullText     完整回答文本
+         * @param thinkingText 完整思考过程（可能为 null / 空）
+         * @param rawResponse  API 原始返回字符串（模拟引擎为 null）
          */
-        void onComplete(String fullText, String rawResponse);
+        void onComplete(String fullText, String thinkingText, String rawResponse);
 
         /**
          * 请求失败。
