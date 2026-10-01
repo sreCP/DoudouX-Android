@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.doudou.x.R;
 import com.doudou.x.model.ChatMessage;
+import com.doudou.x.model.ToolCall;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -231,8 +232,6 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
         return (int) (value * context.getResources().getDisplayMetrics().density + 0.5f);
     }
 
-    /** 非静态内部类：思考块展开/收起时需要回调 Adapter 刷新当前项。 */
-    /** 错误信息：⚠️ 前缀 + 警示色，提示这只是本地报错，不会进入上下文。 */
     private static View buildErrorView(Context context, String text) {
         TextView textView = new TextView(context);
         textView.setText("⚠️ " + (text == null ? "" : text));
@@ -243,16 +242,19 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
         return textView;
     }
 
+    /** 非静态内部类：思考块展开/收起时需要回调 Adapter 刷新当前项。 */
     public class MessageViewHolder extends RecyclerView.ViewHolder {
 
         private final Context context;
         private final TextView tvMessage;
         private final LinearLayout messageBody;
 
-        /** 流式快速通道：只维护两个 TextView，避免每个 token 重建整条消息。 */
+        /** 流式快速通道：只维护少量 TextView，避免每个 token 重建整条消息。 */
         private TextView streamThinkingBody;
         private TextView streamContent;
         private boolean streamingLayoutBound;
+        /** 流式布局里已渲染的工具调用数量，用于判断是否需要重建。 */
+        private int renderedToolCount;
         /** 当前绑定的消息，用于判断增量更新是否仍然有效。 */
         private ChatMessage boundMessage;
 
@@ -278,6 +280,7 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
             messageBody.removeAllViews();
             streamThinkingBody = null;
             streamContent = null;
+            renderedToolCount = 0;
 
             // 流式输出中走轻量布局：一个思考 TextView + 一个正文 TextView，
             // 后续只做 setText 增量更新；渲染完成后才做完整 Markdown 渲染
@@ -296,6 +299,11 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
             // 思考过程（字体更小、颜色更浅、可折叠）
             if (!TextUtils.isEmpty(message.getThinking())) {
                 messageBody.addView(buildThinkingView(message));
+            }
+
+            // 工具调用结果：小字紧凑卡片
+            if (message.getToolCalls() != null && !message.getToolCalls().isEmpty()) {
+                messageBody.addView(buildToolCallsView(message.getToolCalls()));
             }
 
             List<MarkdownParser.Block> blocks = MarkdownParser.parse(message.getContent());
@@ -355,10 +363,14 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
             }
         }
 
-        /** 流式轻量布局：不解析 Markdown，只建两个 TextView。 */
+        /** 流式轻量布局：不解析 Markdown，只建少量 TextView。 */
         private void bindStreamingLayout(ChatMessage message) {
             if (!TextUtils.isEmpty(message.getThinking())) {
                 messageBody.addView(buildThinkingView(message));
+            }
+            if (message.getToolCalls() != null && !message.getToolCalls().isEmpty()) {
+                messageBody.addView(buildToolCallsView(message.getToolCalls()));
+                renderedToolCount = message.getToolCalls().size();
             }
             TextView content = new TextView(context);
             content.setTextSize(15);
@@ -366,7 +378,8 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
             content.setLineSpacing(0f, 1.4f);
             // 流式过程中不做文本选择，避免与频繁 setText 抢主线程
             content.setTextIsSelectable(false);
-            content.setText(message.getContent() + TYPING_CURSOR);
+            String contentText = message.getContent() == null ? "" : message.getContent();
+            content.setText(contentText + TYPING_CURSOR);
             messageBody.addView(content);
             streamContent = content;
             streamingLayoutBound = true;
@@ -384,11 +397,15 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
             if (!TextUtils.isEmpty(thinking) && streamThinkingBody == null) {
                 return false; // 思考块是后来才出现的，需要重建结构
             }
+            int toolCount = message.getToolCalls() == null ? 0 : message.getToolCalls().size();
+            if (toolCount != renderedToolCount) {
+                return false; // 新增了工具调用，需要重建结构
+            }
             if (streamThinkingBody != null) {
                 streamThinkingBody.setText(thinkingTail(thinking));
             }
             if (streamContent != null) {
-                streamContent.setText(text + TYPING_CURSOR);
+                streamContent.setText((text == null ? "" : text) + TYPING_CURSOR);
             }
             return true;
         }
@@ -446,6 +463,37 @@ public class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.MessageViewHol
                 // 流式输出中不做文本选择，避免与频繁 setText 抢主线程
                 body.setTextIsSelectable(!message.isStreaming());
                 root.addView(body);
+            }
+            return root;
+        }
+
+        /** 工具调用卡片：⚙️ 小字浅色，展示「调用了什么、结果是什么」。 */
+        private View buildToolCallsView(List<ToolCall> calls) {
+            LinearLayout root = new LinearLayout(context);
+            root.setOrientation(LinearLayout.VERTICAL);
+
+            TextView header = new TextView(context);
+            header.setText("⚙️ " + context.getString(R.string.chat_tool_call)
+                    + "（" + calls.size() + "）");
+            header.setTextSize(12);
+            header.setTextColor(context.getResources().getColor(R.color.text_secondary));
+            root.addView(header);
+
+            for (ToolCall call : calls) {
+                if (call == null) {
+                    continue;
+                }
+                TextView item = new TextView(context);
+                String args = call.getArguments();
+                boolean hasArgs = args != null && !args.trim().isEmpty()
+                        && !"{}".equals(args.trim());
+                item.setText("• " + call.getName() + (hasArgs ? "(" + args + ")" : "()")
+                        + "\n→ " + (call.getResult() == null ? "" : call.getResult()));
+                item.setTextSize(12);
+                item.setTextColor(context.getResources().getColor(R.color.text_hint));
+                item.setLineSpacing(0f, 1.3f);
+                item.setTextIsSelectable(true);
+                root.addView(item);
             }
             return root;
         }

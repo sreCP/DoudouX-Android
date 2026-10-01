@@ -30,12 +30,15 @@ import com.doudou.x.R;
 import com.doudou.x.ai.AiEngine;
 import com.doudou.x.ai.MockAiEngine;
 import com.doudou.x.ai.OpenAiEngine;
+import com.doudou.x.ai.ToolExecutor;
+import com.doudou.x.ai.ToolRegistry;
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.data.ConversationStore;
 import com.doudou.x.data.SessionManager;
 import com.doudou.x.data.UiSettingsStore;
 import com.doudou.x.model.ChatMessage;
 import com.doudou.x.model.Conversation;
+import com.doudou.x.model.ToolCall;
 import com.doudou.x.ui.login.LoginActivity;
 import com.doudou.x.ui.settings.SettingsActivity;
 
@@ -126,6 +129,13 @@ public class MainActivity extends AppCompatActivity {
         uiSettings = UiSettingsStore.getInstance(this);
         mockEngine = new MockAiEngine();
         openAiEngine = new OpenAiEngine(apiConfig);
+        // 主对话允许使用本地工具；生成标题的请求不带工具，避免小模型乱调用
+        openAiEngine.setToolExecutor(new ToolExecutor() {
+            @Override
+            public String execute(String name, String argumentsJson) {
+                return ToolRegistry.execute(name, argumentsJson);
+            }
+        });
         titleEngine = new OpenAiEngine(apiConfig);
 
         initViews();
@@ -351,6 +361,15 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
+            public void onToolCall(List<ToolCall> calls) {
+                // 工具已在本机执行完，这里只负责展示
+                aiMessage.setToolCalls(calls);
+                chatAdapter.updateLastMessage(aiMessage.getContent(),
+                        aiMessage.getThinking(), true);
+                scrollToBottom();
+            }
+
+            @Override
             public void onComplete(String fullText, String thinkingText, String rawResponse) {
                 finishStreaming(fullText, thinkingText, rawResponse, false);
             }
@@ -507,6 +526,11 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onToken(String fullText, String thinkingText) {
+            }
+
+            @Override
+            public void onToolCall(List<ToolCall> calls) {
+                // 生成标题不需要工具，忽略
             }
 
             @Override

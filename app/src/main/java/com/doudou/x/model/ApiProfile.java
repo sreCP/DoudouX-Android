@@ -27,6 +27,7 @@ public class ApiProfile {
     private static final String JSON_MAX_TOKENS = "maxTokens";
     private static final String JSON_SEND_FULL_HISTORY = "sendFullHistory";
     private static final String JSON_DISABLE_THINKING = "disableThinking";
+    private static final String JSON_FUNCTION_CALLING = "functionCalling";
 
     private String id;
     private String name;
@@ -39,8 +40,10 @@ public class ApiProfile {
     private int maxTokens;
     /** 是否每次把完整对话历史发给服务端（服务端本身不保存会话）。 */
     private boolean sendFullHistory;
-    /** 是否关闭模型思考（请求体下发 think=false）。 */
+    /** 是否关闭模型思考（请求体下发 reasoning_effort=none）。 */
     private boolean disableThinking;
+    /** 是否开启 Function Calling（默认关闭，小模型大多不支持）。 */
+    private boolean functionCallingEnabled;
 
     public ApiProfile(String id, String name, String baseUrl, String apiKey, String model) {
         this(id, name, baseUrl, apiKey, model, "", VALUE_UNSET, VALUE_UNSET,
@@ -78,6 +81,15 @@ public class ApiProfile {
 
     public void setDisableThinking(boolean disableThinking) {
         this.disableThinking = disableThinking;
+    }
+
+    /** 是否开启 Function Calling。 */
+    public boolean isFunctionCallingEnabled() {
+        return functionCallingEnabled;
+    }
+
+    public void setFunctionCallingEnabled(boolean functionCallingEnabled) {
+        this.functionCallingEnabled = functionCallingEnabled;
     }
 
     public String getId() {
@@ -161,6 +173,7 @@ public class ApiProfile {
                 systemPrompt, temperature, topP, maxTokens);
         copy.setSendFullHistory(sendFullHistory);
         copy.setDisableThinking(disableThinking);
+        copy.setFunctionCallingEnabled(functionCallingEnabled);
         return copy;
     }
 
@@ -178,6 +191,7 @@ public class ApiProfile {
             obj.put(JSON_MAX_TOKENS, maxTokens);
             obj.put(JSON_SEND_FULL_HISTORY, sendFullHistory);
             obj.put(JSON_DISABLE_THINKING, disableThinking);
+            obj.put(JSON_FUNCTION_CALLING, functionCallingEnabled);
         } catch (Exception ignored) {
             // 不会发生（key 均非空）
         }
@@ -204,6 +218,7 @@ public class ApiProfile {
                 obj.optInt(JSON_MAX_TOKENS, MAX_TOKENS_UNLIMITED));
         profile.setSendFullHistory(obj.optBoolean(JSON_SEND_FULL_HISTORY, true));
         profile.setDisableThinking(obj.optBoolean(JSON_DISABLE_THINKING, false));
+        profile.setFunctionCallingEnabled(obj.optBoolean(JSON_FUNCTION_CALLING, false));
         return profile;
     }
 }

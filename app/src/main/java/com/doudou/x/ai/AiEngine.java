@@ -1,6 +1,7 @@
 package com.doudou.x.ai;
 
 import com.doudou.x.model.ChatMessage;
+import com.doudou.x.model.ToolCall;
 
 import java.util.List;
 
@@ -30,6 +31,14 @@ public interface AiEngine {
          * @param rawResponse  API 原始返回字符串（模拟引擎为 null）
          */
         void onComplete(String fullText, String thinkingText, String rawResponse);
+
+        /**
+         * 模型发起了工具调用，并且已经在本地执行完成。
+         * 引擎会自动带上结果发起下一轮请求，这里只用于界面展示。
+         *
+         * @param calls 本轮累计的工具调用（已回填 result）
+         */
+        void onToolCall(List<ToolCall> calls);
 
         /**
          * 请求失败。

@@ -25,8 +25,11 @@ import androidx.appcompat.widget.SwitchCompat;
 import com.doudou.x.R;
 import com.doudou.x.ai.AiEngine;
 import com.doudou.x.ai.OpenAiEngine;
+import com.doudou.x.ai.ToolExecutor;
+import com.doudou.x.ai.ToolRegistry;
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.model.ApiProfile;
+import com.doudou.x.model.ToolCall;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -49,6 +52,7 @@ public class ApiSettingsActivity extends AppCompatActivity {
     private EditText etMaxTokens;
     private SwitchCompat switchSendFullHistory;
     private SwitchCompat switchDisableThink;
+    private SwitchCompat switchFunctionCalling;
     private TextView btnTest;
     private Spinner spinnerProfile;
     private TextView btnNewProfile;
@@ -82,6 +86,7 @@ public class ApiSettingsActivity extends AppCompatActivity {
         etMaxTokens = findViewById(R.id.etMaxTokens);
         switchSendFullHistory = findViewById(R.id.switchSendFullHistory);
         switchDisableThink = findViewById(R.id.switchDisableThink);
+        switchFunctionCalling = findViewById(R.id.switchFunctionCalling);
         TextView btnSave = findViewById(R.id.btnSaveApi);
         btnTest = findViewById(R.id.btnTestApi);
         spinnerProfile = findViewById(R.id.spinnerProfile);
@@ -89,6 +94,13 @@ public class ApiSettingsActivity extends AppCompatActivity {
         btnRenameProfile = findViewById(R.id.btnRenameProfile);
         btnDeleteProfile = findViewById(R.id.btnDeleteProfile);
         engine = new OpenAiEngine(config);
+        // 连通性测试也接上本地工具，这样开启 Function Calling 时能完整跑通一轮
+        engine.setToolExecutor(new ToolExecutor() {
+            @Override
+            public String execute(String name, String argumentsJson) {
+                return ToolRegistry.execute(name, argumentsJson);
+            }
+        });
 
         // 回填总开关
         switchEnable.setChecked(config.isEnabled());
@@ -109,6 +121,7 @@ public class ApiSettingsActivity extends AppCompatActivity {
                 };
         switchSendFullHistory.setOnCheckedChangeListener(toggleListener);
         switchDisableThink.setOnCheckedChangeListener(toggleListener);
+        switchFunctionCalling.setOnCheckedChangeListener(toggleListener);
 
         initProfileSpinner();
 
@@ -234,6 +247,7 @@ public class ApiSettingsActivity extends AppCompatActivity {
                 ? String.valueOf(profile.getMaxTokens()) : "");
         switchSendFullHistory.setChecked(profile.isSendFullHistory());
         switchDisableThink.setChecked(profile.isDisableThinking());
+        switchFunctionCalling.setChecked(profile.isFunctionCallingEnabled());
     }
 
     /** 去掉 0.70 这类多余的 0，读起来更像手填的数值。 */
@@ -252,6 +266,7 @@ public class ApiSettingsActivity extends AppCompatActivity {
         }
         profile.setSendFullHistory(switchSendFullHistory.isChecked());
         profile.setDisableThinking(switchDisableThink.isChecked());
+        profile.setFunctionCallingEnabled(switchFunctionCalling.isChecked());
         config.saveProfile(profile);
     }
 
@@ -261,6 +276,7 @@ public class ApiSettingsActivity extends AppCompatActivity {
         profile.setSystemPrompt(etSystemPrompt.getText().toString().trim());
         profile.setSendFullHistory(switchSendFullHistory.isChecked());
         profile.setDisableThinking(switchDisableThink.isChecked());
+        profile.setFunctionCallingEnabled(switchFunctionCalling.isChecked());
 
         String temperatureText = etTemperature.getText().toString().trim();
         String topPText = etTopP.getText().toString().trim();
@@ -433,6 +449,10 @@ public class ApiSettingsActivity extends AppCompatActivity {
 
             @Override
             public void onToken(String fullText, String thinkingText) {
+            }
+
+            @Override
+            public void onToolCall(List<ToolCall> calls) {
             }
 
             @Override

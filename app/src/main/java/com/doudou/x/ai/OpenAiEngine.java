@@ -3,9 +3,11 @@ package com.doudou.x.ai;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.util.SparseArray;
 
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.model.ChatMessage;
+import com.doudou.x.model.ToolCall;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -39,10 +41,13 @@ public class OpenAiEngine implements AiEngine {
 
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS = 60000;
+    /** Function Calling 最多自动接续的轮数，防止模型无限调用工具。 */
+    private static final int MAX_TOOL_ROUNDS = 3;
 
     private final ApiConfigStore config;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private ToolExecutor toolExecutor;
 
     private volatile boolean cancelled = false;
     private volatile HttpURLConnection activeConnection;
@@ -53,6 +58,13 @@ public class OpenAiEngine implements AiEngine {
 
     public OpenAiEngine(ApiConfigStore config) {
         this.config = config;
+    }
+
+    /**
+     * 设置工具执行器。传 null 表示这套引擎不参与工具调用（例如生成标题的请求）。
+     */
+    public void setToolExecutor(ToolExecutor executor) {
+        this.toolExecutor = executor;
     }
 
     public String getLastEndpoint() {
@@ -77,7 +89,7 @@ public class OpenAiEngine implements AiEngine {
         executor.execute(new Runnable() {
             @Override
             public void run() {
-                doRequest(history, callback);
+                doRequest(history, callback, MAX_TOOL_ROUNDS, new ArrayList<ToolCall>());
             }
         });
     }
@@ -92,7 +104,12 @@ public class OpenAiEngine implements AiEngine {
         }
     }
 
-    private void doRequest(List<ChatMessage> history, StreamCallback callback) {
+    /**
+     * @param roundsLeft        剩余可自动接续的工具轮数
+     * @param carriedToolCalls  之前轮次已执行的工具调用，用于最终一次性展示
+     */
+    private void doRequest(List<ChatMessage> history, StreamCallback callback,
+                           int roundsLeft, List<ToolCall> carriedToolCalls) {
         final StringBuilder raw = new StringBuilder();
         final StringBuilder answer = new StringBuilder();
         // 思考型模型（reasoning / reasoning_content）的思考过程，单独累积
@@ -109,7 +126,9 @@ public class OpenAiEngine implements AiEngine {
             conn.setRequestProperty("Accept", "text/event-stream");
             conn.setRequestProperty("Authorization", "Bearer " + config.getApiKey());
 
-            String bodyJson = buildRequestBody(history);
+            boolean toolsEnabled = config.isFunctionCallingEnabled() && toolExecutor != null
+                    && roundsLeft > 0;
+            String bodyJson = buildRequestBody(history, toolsEnabled);
             lastEndpoint = endpoint;
             lastRequestBody = bodyJson;
             // 排查用日志：Logcat 过滤 DoudouX
@@ -138,6 +157,8 @@ public class OpenAiEngine implements AiEngine {
                     new InputStreamReader(stream, StandardCharsets.UTF_8));
             String line;
             boolean done = false;
+            // 工具调用分片累积：index → 调用
+            final SparseArray<ToolCallBuilder> toolBuilders = new SparseArray<>();
             while ((line = reader.readLine()) != null) {
                 if (cancelled) {
                     return;
@@ -179,6 +200,7 @@ public class OpenAiEngine implements AiEngine {
                     done = true;
                     break;
                 }
+                collectToolCallDeltas(payload, toolBuilders);
                 // 兼容思考型模型（Ollama / Qwen3 等）：
                 // delta.content 为正式回答，delta.reasoning 为思考过程
                 String[] delta = parseDelta(payload);
@@ -205,9 +227,41 @@ public class OpenAiEngine implements AiEngine {
                 String serverMessage = extractServerMessage(raw.toString());
                 notifyError(callback, "HTTP " + code
                         + (serverMessage == null ? "" : " · " + serverMessage), raw.toString());
-            } else if (answer.length() == 0 && reasoning.length() == 0) {
+            } else if (answer.length() == 0 && reasoning.length() == 0
+                    && toolBuilders.size() == 0) {
                 notifyError(callback, done ? "响应内容为空" : "流意外中断", raw.toString());
             } else {
+                // 模型发起了工具调用：本地执行后把结果回传，再自动发起下一轮
+                List<ToolCall> roundCalls = buildToolCalls(toolBuilders);
+                if (!roundCalls.isEmpty() && toolExecutor != null && roundsLeft <= 0) {
+                    // 轮次用尽仍要调工具：不再循环，明确提示，避免返回一条空消息
+                    Log.w(LOG_TAG, "工具调用轮次已达上限（" + MAX_TOOL_ROUNDS + "轮），停止调用");
+                    notifyError(callback, "工具调用轮次已达上限（最多 "
+                            + MAX_TOOL_ROUNDS + " 轮），已停止", raw.toString());
+                } else if (!roundCalls.isEmpty() && toolExecutor != null) {
+                    for (ToolCall call : roundCalls) {
+                        call.setResult(toolExecutor.execute(call.getName(), call.getArguments()));
+                        Log.d(LOG_TAG, "工具调用：" + call.getName()
+                                + "，参数：" + call.getArguments()
+                                + "，结果：" + call.getResult());
+                    }
+                    List<ToolCall> allCalls = new ArrayList<>(carriedToolCalls);
+                    allCalls.addAll(roundCalls);
+                    notifyToolCalls(callback, allCalls);
+
+                    List<ChatMessage> nextHistory = new ArrayList<>(history);
+                    ChatMessage assistantCall = new ChatMessage(ChatMessage.ROLE_AI, "");
+                    assistantCall.setToolCalls(roundCalls);
+                    nextHistory.add(assistantCall);
+                    for (ToolCall call : roundCalls) {
+                        ChatMessage toolMessage =
+                                new ChatMessage(ChatMessage.ROLE_TOOL, call.getResult());
+                        toolMessage.setToolCallId(call.getId());
+                        nextHistory.add(toolMessage);
+                    }
+                    doRequest(nextHistory, callback, roundsLeft - 1, allCalls);
+                    return;
+                }
                 // 正式回答与思考过程分开回传，由界面决定怎么展示
                 notifyComplete(callback, answer.toString(), reasoning.toString(), raw.toString());
             }
@@ -255,7 +309,7 @@ public class OpenAiEngine implements AiEngine {
     }
 
     /** 构造 OpenAI 兼容请求体（默认带完整多轮上下文）。 */
-    private String buildRequestBody(List<ChatMessage> history) {
+    private String buildRequestBody(List<ChatMessage> history, boolean withTools) {
         try {
             // 服务端不保存会话：完整历史由客户端每次回传；
             // 关闭该开关时只发送当前这一句，用于省流或单轮问答场景
@@ -285,12 +339,47 @@ public class OpenAiEngine implements AiEngine {
             }
             if (toSend != null) {
                 for (ChatMessage msg : toSend) {
-                    String content = msg.getContent();
-                    if (content == null || content.isEmpty()) {
-                        continue; // 跳过占位中的空 AI 消息
-                    }
                     if (msg.isError()) {
                         continue; // 错误信息是本地提示，不能作为上下文回传
+                    }
+                    String content = msg.getContent();
+                    boolean emptyContent = content == null || content.isEmpty();
+
+                    // 工具结果消息：role=tool + tool_call_id
+                    if (msg.getRole() == ChatMessage.ROLE_TOOL) {
+                        JSONObject item = new JSONObject();
+                        item.put("role", "tool");
+                        item.put("tool_call_id", msg.getToolCallId());
+                        item.put("content", emptyContent ? "" : content);
+                        messages.put(item);
+                        continue;
+                    }
+                    // assistant 发起的工具调用
+                    List<ToolCall> calls = msg.getToolCalls();
+                    if (calls != null && !calls.isEmpty()) {
+                        JSONObject item = new JSONObject();
+                        item.put("role", "assistant");
+                        if (!emptyContent) {
+                            item.put("content", content);
+                        }
+                        JSONArray callsArray = new JSONArray();
+                        for (ToolCall call : calls) {
+                            JSONObject callObj = new JSONObject();
+                            callObj.put("id", call.getId());
+                            callObj.put("type", "function");
+                            JSONObject function = new JSONObject();
+                            function.put("name", call.getName());
+                            function.put("arguments",
+                                    call.getArguments() == null ? "" : call.getArguments());
+                            callObj.put("function", function);
+                            callsArray.put(callObj);
+                        }
+                        item.put("tool_calls", callsArray);
+                        messages.put(item);
+                        continue;
+                    }
+                    if (emptyContent) {
+                        continue; // 跳过占位中的空 AI 消息
                     }
                     JSONObject item = new JSONObject();
                     item.put("role", msg.getRole() == ChatMessage.ROLE_USER ? "user" : "assistant");
@@ -318,6 +407,11 @@ public class OpenAiEngine implements AiEngine {
             // 关闭模型思考：用 reasoning_effort=none（think=false 对部分服务端不生效）
             if (config.isDisableThinking()) {
                 body.put("reasoning_effort", "none");
+            }
+            // Function Calling：声明可用工具，交给模型决定要不要调用
+            if (withTools) {
+                body.put("tools", ToolRegistry.toolsJson());
+                body.put("tool_choice", "auto");
             }
             return body.toString();
         } catch (Exception e) {
@@ -354,6 +448,80 @@ public class OpenAiEngine implements AiEngine {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * 累积 SSE 里的 tool_calls 分片。
+     * delta.tool_calls 是数组，每个元素带 index，name / arguments 都是流式拼接出来的。
+     */
+    private void collectToolCallDeltas(String payload, SparseArray<ToolCallBuilder> builders) {
+        try {
+            JSONObject obj = new JSONObject(payload);
+            JSONArray choices = obj.optJSONArray("choices");
+            if (choices == null || choices.length() == 0) {
+                return;
+            }
+            JSONObject delta = choices.getJSONObject(0).optJSONObject("delta");
+            if (delta == null) {
+                return;
+            }
+            JSONArray calls = delta.optJSONArray("tool_calls");
+            if (calls == null) {
+                return;
+            }
+            for (int i = 0; i < calls.length(); i++) {
+                JSONObject call = calls.getJSONObject(i);
+                int index = call.optInt("index", i);
+                ToolCallBuilder builder = builders.get(index);
+                if (builder == null) {
+                    builder = new ToolCallBuilder();
+                    builders.put(index, builder);
+                }
+                String id = call.optString("id", null);
+                if (id != null && !id.isEmpty() && !"null".equals(id)) {
+                    builder.id = id;
+                }
+                JSONObject function = call.optJSONObject("function");
+                if (function == null) {
+                    continue;
+                }
+                String name = function.optString("name", null);
+                if (name != null && !name.isEmpty() && !"null".equals(name)) {
+                    builder.name.append(name);
+                }
+                String arguments = function.optString("arguments", null);
+                if (arguments != null && !arguments.isEmpty() && !"null".equals(arguments)) {
+                    builder.arguments.append(arguments);
+                }
+            }
+        } catch (Exception ignored) {
+            // 不是合法 JSON 就跳过
+        }
+    }
+
+    /** 把分片累积结果整理成工具调用列表。 */
+    private List<ToolCall> buildToolCalls(SparseArray<ToolCallBuilder> builders) {
+        List<ToolCall> calls = new ArrayList<>();
+        for (int i = 0; i < builders.size(); i++) {
+            ToolCallBuilder builder = builders.valueAt(i);
+            if (builder == null || builder.name.length() == 0) {
+                continue;
+            }
+            ToolCall call = new ToolCall();
+            String id = builder.id;
+            call.setId(id == null || id.isEmpty() ? "call_" + i : id);
+            call.setName(builder.name.toString());
+            call.setArguments(builder.arguments.toString());
+            calls.add(call);
+        }
+        return calls;
+    }
+
+    /** tool_calls 分片累积器。 */
+    private static class ToolCallBuilder {
+        String id;
+        final StringBuilder name = new StringBuilder();
+        final StringBuilder arguments = new StringBuilder();
     }
 
     /**
@@ -430,6 +598,17 @@ public class OpenAiEngine implements AiEngine {
             public void run() {
                 if (!cancelled) {
                     callback.onComplete(fullText, thinkingText, raw);
+                }
+            }
+        });
+    }
+
+    private void notifyToolCalls(final StreamCallback callback, final List<ToolCall> calls) {
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!cancelled) {
+                    callback.onToolCall(calls);
                 }
             }
         });

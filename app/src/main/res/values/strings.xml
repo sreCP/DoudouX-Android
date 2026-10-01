@@ -92,6 +92,9 @@
     <string name="api_error_max_tokens">最大输出 Token 需为正整数</string>
     <string name="api_send_full_history">每次发送完整对话历史</string>
     <string name="api_send_full_history_subtitle">服务端不保存会话，多轮靠客户端回传；关闭后只发送当前这一句</string>
+    <string name="api_function_calling">启用 Function Calling</string>
+    <string name="api_function_calling_subtitle">允许模型调用本地工具（当前仅：获取当前时间）；小模型通常不支持</string>
+    <string name="chat_tool_call">工具调用</string>
     <string name="api_disable_think">关闭模型思考</string>
     <string name="api_disable_think_subtitle">请求体下发 reasoning_effort=none，仅对支持该字段的服务端生效</string>
 

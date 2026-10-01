@@ -164,6 +164,12 @@ public class ApiConfigStore {
         return profile != null && profile.isDisableThinking();
     }
 
+    /** 是否开启 Function Calling。 */
+    public boolean isFunctionCallingEnabled() {
+        ApiProfile profile = getActiveProfile();
+        return profile != null && profile.isFunctionCallingEnabled();
+    }
+
     /** 开关打开且当前配置三项齐全时，才走真实接口。 */
     public boolean isReady() {
         return isEnabled() && isProfileReady(getActiveProfile());

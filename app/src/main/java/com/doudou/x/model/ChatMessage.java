@@ -1,7 +1,11 @@
 package com.doudou.x.model;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 单条聊天消息。
@@ -10,6 +14,8 @@ public class ChatMessage {
 
     public static final int ROLE_USER = 0;
     public static final int ROLE_AI = 1;
+    /** 工具结果消息，只在引擎内部的临时上下文里出现，不单独作为气泡展示。 */
+    public static final int ROLE_TOOL = 2;
 
     private static final String KEY_ROLE = "role";
     private static final String KEY_CONTENT = "content";
@@ -17,6 +23,8 @@ public class ChatMessage {
     private static final String KEY_RAW = "raw";
     private static final String KEY_THINKING = "thinking";
     private static final String KEY_ERROR = "error";
+    private static final String KEY_TOOL_CALL_ID = "toolCallId";
+    private static final String KEY_TOOL_CALLS = "toolCalls";
 
     private final int role;
     private String content;
@@ -31,6 +39,10 @@ public class ChatMessage {
     private boolean error;
     /** 思考块是否展开（仅 UI 状态，不持久化）。 */
     private boolean thinkingExpanded;
+    /** role=tool 时对应 tool_calls 的 id。 */
+    private String toolCallId;
+    /** assistant 消息发起的工具调用（含执行结果），用于界面展示。 */
+    private List<ToolCall> toolCalls;
 
     public ChatMessage(int role, String content) {
         this(role, content, System.currentTimeMillis());
@@ -90,6 +102,22 @@ public class ChatMessage {
         this.error = error;
     }
 
+    public String getToolCallId() {
+        return toolCallId;
+    }
+
+    public void setToolCallId(String toolCallId) {
+        this.toolCallId = toolCallId;
+    }
+
+    public List<ToolCall> getToolCalls() {
+        return toolCalls;
+    }
+
+    public void setToolCalls(List<ToolCall> toolCalls) {
+        this.toolCalls = toolCalls;
+    }
+
     public boolean isThinkingExpanded() {
         return thinkingExpanded;
     }
@@ -112,6 +140,18 @@ public class ChatMessage {
         if (error) {
             obj.put(KEY_ERROR, true);
         }
+        if (toolCallId != null && !toolCallId.isEmpty()) {
+            obj.put(KEY_TOOL_CALL_ID, toolCallId);
+        }
+        if (toolCalls != null && !toolCalls.isEmpty()) {
+            JSONArray arr = new JSONArray();
+            for (ToolCall call : toolCalls) {
+                if (call != null) {
+                    arr.put(call.toJson());
+                }
+            }
+            obj.put(KEY_TOOL_CALLS, arr);
+        }
         return obj;
     }
 
@@ -125,6 +165,18 @@ public class ChatMessage {
         msg.setRawResponse(raw);
         msg.setThinking(obj.optString(KEY_THINKING, ""));
         msg.setError(obj.optBoolean(KEY_ERROR, false));
+        msg.setToolCallId(obj.optString(KEY_TOOL_CALL_ID, ""));
+        JSONArray calls = obj.optJSONArray(KEY_TOOL_CALLS);
+        if (calls != null && calls.length() > 0) {
+            List<ToolCall> list = new ArrayList<>();
+            for (int i = 0; i < calls.length(); i++) {
+                ToolCall call = ToolCall.fromJson(calls.optJSONObject(i));
+                if (call != null) {
+                    list.add(call);
+                }
+            }
+            msg.setToolCalls(list);
+        }
         return msg;
     }
 }
