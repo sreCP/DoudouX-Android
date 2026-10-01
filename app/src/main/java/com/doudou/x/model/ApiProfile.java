@@ -71,7 +71,7 @@ public class ApiProfile {
         this.sendFullHistory = sendFullHistory;
     }
 
-    /** 是否关闭模型思考（下发 think=false），默认不关闭。 */
+    /** 是否关闭模型思考（下发 reasoning_effort=none），默认不关闭。 */
     public boolean isDisableThinking() {
         return disableThinking;
     }

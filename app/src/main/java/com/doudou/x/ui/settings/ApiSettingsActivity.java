@@ -9,6 +9,7 @@ import android.text.TextUtils;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ScrollView;
@@ -91,6 +92,23 @@ public class ApiSettingsActivity extends AppCompatActivity {
 
         // 回填总开关
         switchEnable.setChecked(config.isEnabled());
+
+        // 开关改动立即落盘，避免按返回键后丢失
+        switchEnable.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                config.setEnabled(isChecked);
+            }
+        });
+        CompoundButton.OnCheckedChangeListener toggleListener =
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                        persistToggles();
+                    }
+                };
+        switchSendFullHistory.setOnCheckedChangeListener(toggleListener);
+        switchDisableThink.setOnCheckedChangeListener(toggleListener);
 
         initProfileSpinner();
 
@@ -226,8 +244,24 @@ public class ApiSettingsActivity extends AppCompatActivity {
         return String.valueOf(value);
     }
 
+    /** 开关类参数立即写入当前配置并落盘（不依赖「保存」按钮）。 */
+    private void persistToggles() {
+        ApiProfile profile = currentProfile();
+        if (profile == null) {
+            return;
+        }
+        profile.setSendFullHistory(switchSendFullHistory.isChecked());
+        profile.setDisableThinking(switchDisableThink.isChecked());
+        config.saveProfile(profile);
+    }
+
     /** 把表单里的模型参数写入配置；数值不合法时提示并返回 false。 */
     private boolean applyModelParams(ApiProfile profile) {
+        // 开关与系统提示词先写入，避免数值校验失败时把它们一起丢掉
+        profile.setSystemPrompt(etSystemPrompt.getText().toString().trim());
+        profile.setSendFullHistory(switchSendFullHistory.isChecked());
+        profile.setDisableThinking(switchDisableThink.isChecked());
+
         String temperatureText = etTemperature.getText().toString().trim();
         String topPText = etTopP.getText().toString().trim();
         String maxTokensText = etMaxTokens.getText().toString().trim();
@@ -268,12 +302,9 @@ public class ApiSettingsActivity extends AppCompatActivity {
                 return false;
             }
         }
-        profile.setSystemPrompt(etSystemPrompt.getText().toString().trim());
         profile.setTemperature(temperature);
         profile.setTopP(topP);
         profile.setMaxTokens(maxTokens);
-        profile.setSendFullHistory(switchSendFullHistory.isChecked());
-        profile.setDisableThinking(switchDisableThink.isChecked());
         return true;
     }
 

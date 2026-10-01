@@ -315,9 +315,9 @@ public class OpenAiEngine implements AiEngine {
             if (maxTokens > 0) {
                 body.put("max_tokens", maxTokens);
             }
-            // 关闭模型思考（Ollama 等服务端支持该字段）
+            // 关闭模型思考：用 reasoning_effort=none（think=false 对部分服务端不生效）
             if (config.isDisableThinking()) {
-                body.put("think", false);
+                body.put("reasoning_effort", "none");
             }
             return body.toString();
         } catch (Exception e) {

@@ -93,7 +93,7 @@
     <string name="api_send_full_history">每次发送完整对话历史</string>
     <string name="api_send_full_history_subtitle">服务端不保存会话，多轮靠客户端回传；关闭后只发送当前这一句</string>
     <string name="api_disable_think">关闭模型思考</string>
-    <string name="api_disable_think_subtitle">请求体下发 think=false，仅对支持该字段的服务端生效（如 Ollama）</string>
+    <string name="api_disable_think_subtitle">请求体下发 reasoning_effort=none，仅对支持该字段的服务端生效</string>
 
     <!-- API 多套配置 -->
     <string name="api_profile_section">配置管理</string>

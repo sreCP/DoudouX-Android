@@ -6,6 +6,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.EditText;
@@ -16,6 +18,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.view.GravityCompat;
@@ -54,6 +57,7 @@ public class MainActivity extends AppCompatActivity {
 
     private RecyclerView recyclerChat;
     private RecyclerView recyclerHistory;
+    private LinearLayoutManager chatLayoutManager;
 
     private ChatAdapter chatAdapter;
     private HistoryAdapter historyAdapter;
@@ -69,6 +73,43 @@ public class MainActivity extends AppCompatActivity {
 
     private Conversation currentConversation;
     private boolean streaming = false;
+
+    /**
+     * 流式刷新节流：每 STREAM_UI_INTERVAL_MS 毫秒刷新一次。
+     * 增量更新只做 setText，单次开销很小，所以间隔可以比之前更短。
+     */
+    private static final long STREAM_UI_INTERVAL_MS = 80;
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
+    private String pendingStreamText;
+    private String pendingStreamThinking;
+    private boolean streamUpdateScheduled;
+    private final Runnable streamFlushRunnable = new Runnable() {
+        @Override
+        public void run() {
+            streamUpdateScheduled = false;
+            // 先把数据落到消息对象上
+            chatAdapter.setLastMessageData(pendingStreamText, pendingStreamThinking);
+            // 优先走增量更新：只 setText，不重建视图结构
+            boolean handled = false;
+            ChatMessage last = chatAdapter.getLastMessage();
+            int lastIndex = chatAdapter.getMessageCount() - 1;
+            if (last != null && lastIndex >= 0) {
+                RecyclerView.ViewHolder holder =
+                        recyclerChat.findViewHolderForAdapterPosition(lastIndex);
+                if (holder instanceof ChatAdapter.MessageViewHolder) {
+                    handled = ((ChatAdapter.MessageViewHolder) holder)
+                            .updateStreamingContent(last, pendingStreamText,
+                                    pendingStreamThinking);
+                }
+            }
+            if (!handled) {
+                chatAdapter.updateLastMessage(pendingStreamText, pendingStreamThinking, true);
+            }
+            scrollToBottom();
+        }
+    };
+    /** 用户手动上滑离开底部时暂停自动滚动。 */
+    private boolean autoScrollToBottom = true;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -128,6 +169,20 @@ public class MainActivity extends AppCompatActivity {
 
     private void initChatList() {
         chatAdapter = new ChatAdapter();
+        chatLayoutManager = new LinearLayoutManager(this);
+        chatLayoutManager.setStackFromEnd(true);
+        recyclerChat.setLayoutManager(chatLayoutManager);
+        recyclerChat.setAdapter(chatAdapter);
+        // 流式输出会频繁改变最后一项高度，默认动画会导致闪烁/短暂空白
+        recyclerChat.setItemAnimator(null);
+        recyclerChat.setItemViewCacheSize(8);
+        recyclerChat.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                // 用户手动离开底部时停止自动滚动，避免和手势互相打断
+                autoScrollToBottom = !recyclerView.canScrollVertically(1);
+            }
+        });
         chatAdapter.setOnAiMessageLongClickListener(
                 new ChatAdapter.OnAiMessageLongClickListener() {
                     @Override
@@ -145,10 +200,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         applyCodeRenderMode();
-        LinearLayoutManager layoutManager = new LinearLayoutManager(this);
-        layoutManager.setStackFromEnd(true);
-        recyclerChat.setLayoutManager(layoutManager);
-        recyclerChat.setAdapter(chatAdapter);
     }
 
     private void initDrawer() {
@@ -237,6 +288,7 @@ public class MainActivity extends AppCompatActivity {
     private void loadConversation(Conversation conversation) {
         cancelEngines();
         streaming = false;
+        autoScrollToBottom = true;
         updateSendButtonState();
         currentConversation = conversation;
         chatAdapter.setMessages(conversation.getMessages());
@@ -259,6 +311,8 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, R.string.api_config_incomplete, Toast.LENGTH_SHORT).show();
         }
         etInput.setText("");
+        // 发出新消息后恢复自动跟随底部
+        autoScrollToBottom = true;
 
         // 用户消息
         ChatMessage userMessage = new ChatMessage(ChatMessage.ROLE_USER, text);
@@ -286,8 +340,14 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onToken(String fullText, String thinkingText) {
-                chatAdapter.updateLastMessage(fullText, thinkingText, true);
-                scrollToBottom();
+                // 节流：累计到一定间隔再刷新，避免每个 token 都整条重建视图
+                pendingStreamText = fullText;
+                pendingStreamThinking = thinkingText;
+                if (streamUpdateScheduled) {
+                    return;
+                }
+                streamUpdateScheduled = true;
+                uiHandler.postDelayed(streamFlushRunnable, STREAM_UI_INTERVAL_MS);
             }
 
             @Override
@@ -304,6 +364,9 @@ public class MainActivity extends AppCompatActivity {
             private void finishStreaming(String finalText, String thinkingText,
                                          String rawResponse, boolean error) {
                 streaming = false;
+                // 取消未执行的节流刷新，立即用最终结果刷新一次
+                uiHandler.removeCallbacks(streamFlushRunnable);
+                streamUpdateScheduled = false;
                 aiMessage.setRawResponse(rawResponse);
                 aiMessage.setThinking(thinkingText);
                 aiMessage.setError(error);
@@ -510,11 +573,41 @@ public class MainActivity extends AppCompatActivity {
         btnSend.setAlpha(streaming ? 0.4f : 1.0f);
     }
 
+    /**
+     * 滚到底部。最后一项高于一屏时 scrollToPosition 只会把它的顶部对齐到顶部，
+     * 所以额外补一次到底滚动，保证最新内容可见。
+     */
     private void scrollToBottom() {
         int count = chatAdapter.getMessageCount();
-        if (count > 0) {
+        if (count == 0 || !autoScrollToBottom) {
+            return;
+        }
+        if (chatLayoutManager != null) {
+            chatLayoutManager.scrollToPosition(count - 1);
+        } else {
             recyclerChat.scrollToPosition(count - 1);
         }
+        recyclerChat.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!autoScrollToBottom || chatLayoutManager == null) {
+                    return;
+                }
+                int lastIndex = chatAdapter.getMessageCount() - 1;
+                if (lastIndex < 0) {
+                    return;
+                }
+                View lastView = chatLayoutManager.findViewByPosition(lastIndex);
+                if (lastView == null) {
+                    return;
+                }
+                int overflow = lastView.getBottom()
+                        - (recyclerChat.getHeight() - recyclerChat.getPaddingBottom());
+                if (overflow > 0) {
+                    recyclerChat.scrollBy(0, overflow);
+                }
+            }
+        });
     }
 
     private void goLogin() {
@@ -560,6 +653,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         cancelEngines();
+        uiHandler.removeCallbacks(streamFlushRunnable);
         super.onDestroy();
     }
 }
