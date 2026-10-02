@@ -5,6 +5,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.util.SparseArray;
 
+import com.doudou.x.ai.context.ContextManager;
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.model.ChatMessage;
 import com.doudou.x.model.ToolCall;
@@ -37,9 +38,10 @@ import java.util.concurrent.Executors;
 public class OpenAiEngine implements AiEngine {
 
     /**
-     * 排查专用：Logcat 过滤该 tag 即可看到完整请求与原始响应。
+     * 排查专用：Logcat 过滤该 tag 即可看到完整请求与整理后的流式日志。
+     * 与 {@link StreamLogger} 共用同一个 tag，一次过滤能看到全部内容。
      */
-    public static final String LOG_TAG = "DoudouX";
+    public static final String LOG_TAG = StreamLogger.LOG_TAG;
 
     private static final int CONNECT_TIMEOUT_MS = 30000;
     /**
@@ -63,6 +65,8 @@ public class OpenAiEngine implements AiEngine {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private ToolExecutor toolExecutor;
+    /** 上下文预算与滚动压缩的入口，本身是单例。 */
+    private final ContextManager contextManager = ContextManager.get();
 
     private volatile boolean cancelled = false;
     private volatile HttpURLConnection activeConnection;
@@ -133,8 +137,12 @@ public class OpenAiEngine implements AiEngine {
         final StringBuilder answer = new StringBuilder();
         // 思考型模型（reasoning / reasoning_content）的思考过程，单独累积
         final StringBuilder reasoning = new StringBuilder();
+        final String endpoint =
+                config.getBaseUrl().replaceAll("/+$", "") + "/chat/completions";
+        // 本次流式会话的日志：整理成可读块 + 按批保留原始事件
+        final StreamLogger logger = new StreamLogger(endpoint, config.getModel());
+        String finishReason = null;
         try {
-            String endpoint = config.getBaseUrl().replaceAll("/+$", "") + "/chat/completions";
             HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();
             activeConnection = conn;
             conn.setRequestMethod("POST");
@@ -155,7 +163,6 @@ public class OpenAiEngine implements AiEngine {
             String bodyJson = buildRequestBody(history, toolsEnabled);
             lastEndpoint = endpoint;
             lastRequestBody = bodyJson;
-            // 排查用日志：Logcat 过滤 DoudouX
             Log.d(LOG_TAG, "请求方式：POST，请求地址：" + endpoint);
             Log.d(LOG_TAG, "鉴权头：Bearer " + maskKey(config.getApiKey()));
             Log.d(LOG_TAG, "请求体：" + bodyJson);
@@ -181,42 +188,44 @@ public class OpenAiEngine implements AiEngine {
                     new InputStreamReader(stream, StandardCharsets.UTF_8));
             String line;
             boolean done = false;
-            // 服务端给出的结束原因：length 表示被输出长度上限截断
-            String finishReason = null;
             // 工具调用分片累积：index → 调用
             final SparseArray<ToolCallBuilder> toolBuilders = new SparseArray<>();
             while ((line = reader.readLine()) != null) {
                 if (cancelled) {
                     return;
                 }
+                boolean blank = line.trim().isEmpty();
                 appendRaw(raw, line);
-                // fixme 流式输出大量日志处
-                // SSE 每个事件之间会有一个空行，空行不打印，避免刷屏
-                if (!line.trim().isEmpty()) {
-                    Log.v(LOG_TAG, "流| " + line);
+                // 原始事件交给日志类按批整理；blank 行没有信息量，日志里不出现
+                if (!blank) {
+                    logger.appendRaw(line);
                 }
                 if (!line.startsWith("data:")) {
                     // 兼容 Ollama 原生接口（/api/chat、/api/generate）直接返回的 NDJSON
                     String jsonLine = line.trim();
                     if (jsonLine.startsWith("{")) {
                         String[] nativeDelta = parseNativeChunk(jsonLine);
-                        if (nativeDelta != null) {
-                            boolean changed = false;
-                            if (!nativeDelta[0].isEmpty()) {
-                                answer.append(nativeDelta[0]);
-                                changed = true;
-                            }
-                            if (!nativeDelta[1].isEmpty()) {
-                                reasoning.append(nativeDelta[1]);
-                                changed = true;
-                            }
-                            if (changed) {
-                                notifyToken(callback, answer.toString(), reasoning.toString());
-                            }
-                            if (isNativeDone(jsonLine)) {
-                                done = true;
-                                break;
-                            }
+                        String nativeAnswer = nativeDelta == null ? "" : nativeDelta[0];
+                        String nativeReasoning = nativeDelta == null ? "" : nativeDelta[1];
+                        // 与 SSE 分支一致：先累计字数，再登记事件（可能触发打印）
+                        logger.countAnswer(nativeAnswer.length());
+                        logger.countReasoning(nativeReasoning.length());
+                        logger.onEvent(jsonLine, false, nativeAnswer, nativeReasoning, null, 0);
+                        boolean changed = false;
+                        if (!nativeAnswer.isEmpty()) {
+                            answer.append(nativeAnswer);
+                            changed = true;
+                        }
+                        if (!nativeReasoning.isEmpty()) {
+                            reasoning.append(nativeReasoning);
+                            changed = true;
+                        }
+                        if (changed) {
+                            notifyToken(callback, answer.toString(), reasoning.toString());
+                        }
+                        if (isNativeDone(jsonLine)) {
+                            done = true;
+                            break;
                         }
                     }
                     continue; // 跳过 event:、注释、空行
@@ -226,27 +235,34 @@ public class OpenAiEngine implements AiEngine {
                     done = true;
                     break;
                 }
-                collectToolCallDeltas(payload, toolBuilders);
-                String reason = parseFinishReason(payload);
-                if (reason != null) {
-                    finishReason = reason;
+                // 一条事件只解析一次：增量、结束原因、工具分片都从这里取
+                ParsedEvent event = parseEvent(payload);
+                if (event == null) {
+                    logger.onEvent(payload, true, "", "", null, 0);
+                    logger.onParseFailure(payload);
+                    continue;
                 }
-                // 兼容思考型模型（Ollama / Qwen3 等）：
-                // delta.content 为正式回答，delta.reasoning 为思考过程
-                String[] delta = parseDelta(payload);
-                if (delta != null) {
-                    boolean changed = false;
-                    if (!delta[0].isEmpty()) {
-                        answer.append(delta[0]);
-                        changed = true;
-                    }
-                    if (!delta[1].isEmpty()) {
-                        reasoning.append(delta[1]);
-                        changed = true;
-                    }
-                    if (changed) {
-                        notifyToken(callback, answer.toString(), reasoning.toString());
-                    }
+                if (event.finishReason != null) {
+                    finishReason = event.finishReason;
+                }
+                // 先累计字数再登记事件：onEvent 可能因为满块而立即打印，
+                // 那时计数必须已经包含本条增量，否则块的"累计N字"会滞后一块
+                logger.countAnswer(event.answer.length());
+                logger.countReasoning(event.reasoning.length());
+                logger.onEvent(payload, true, event.answer, event.reasoning,
+                        event.finishReason, event.toolCallDeltas);
+                mergeToolCallDeltas(event, toolBuilders);
+                boolean changed = false;
+                if (!event.answer.isEmpty()) {
+                    answer.append(event.answer);
+                    changed = true;
+                }
+                if (!event.reasoning.isEmpty()) {
+                    reasoning.append(event.reasoning);
+                    changed = true;
+                }
+                if (changed) {
+                    notifyToken(callback, answer.toString(), reasoning.toString());
                 }
             }
             reader.close();
@@ -310,11 +326,113 @@ public class OpenAiEngine implements AiEngine {
             }
         } finally {
             activeConnection = null;
+            // 任何退出路径（正常结束 / 取消 / 异常 / 工具续轮）都要收尾，
+            // 否则最后一批内容块和结束汇总会丢；close 幂等，重复调用无副作用
+            logger.close(finishReason, extractUsage(raw.toString()), raw.toString());
         }
     }
 
     /**
-     * 累计一行原始数据。思考过程可能非常长，这里设一个上限，
+     * 一条事件解析后的全部可用信息。
+     *
+     * <p>把原来分散的 parseDelta / parseFinishReason / collectToolCallDeltas
+     * 合并成一次解析：既能为日志提供一条事件的完整元信息，也省掉同一个
+     * JSONObject 被反复构造的开销。
+     */
+    private static final class ParsedEvent {
+        /** 正式回答增量，无增量为空串。 */
+        String answer = "";
+        /** 思考过程增量，无增量为空串。 */
+        String reasoning = "";
+        /** 服务端结束原因（stop / length / tool_calls），非 null 表示本条带该字段。 */
+        String finishReason;
+        /** 本条事件携带的 tool_calls 分片数量。 */
+        int toolCallDeltas;
+        /** 本条事件的 tool_calls 原始数组，供合并分片使用。 */
+        JSONArray toolCallArray;
+    }
+
+    /** 解析一条 SSE 事件正文；非 JSON 或没有 choices 时返回 null。 */
+    private ParsedEvent parseEvent(String payload) {
+        if (payload == null || payload.isEmpty()) {
+            return null;
+        }
+        JSONObject obj;
+        try {
+            obj = new JSONObject(payload);
+        } catch (Exception e) {
+            return null;
+        }
+        JSONArray choices = obj.optJSONArray("choices");
+        if (choices == null || choices.length() == 0) {
+            return null;
+        }
+        JSONObject choice = choices.optJSONObject(0);
+        if (choice == null) {
+            return null;
+        }
+        ParsedEvent event = new ParsedEvent();
+        String reason = choice.optString("finish_reason", null);
+        if (reason != null && !reason.isEmpty() && !"null".equals(reason)) {
+            event.finishReason = reason;
+        }
+        JSONObject delta = choice.optJSONObject("delta");
+        if (delta != null) {
+            event.answer = optText(delta, "content");
+            // 兼容思考型模型：reasoning（Ollama / Qwen3）与 reasoning_content（DeepSeek）
+            event.reasoning = optText(delta, "reasoning");
+            if (event.reasoning.isEmpty()) {
+                event.reasoning = optText(delta, "reasoning_content");
+            }
+            JSONArray calls = delta.optJSONArray("tool_calls");
+            if (calls != null) {
+                event.toolCallDeltas = calls.length();
+                event.toolCallArray = calls;
+            }
+        }
+        return event;
+    }
+
+    /** 取字符串字段，把 JSON null 与字段缺失统一成空串。 */
+    private static String optText(JSONObject obj, String key) {
+        String value = obj.optString(key, null);
+        return value == null || "null".equals(value) ? "" : value;
+    }
+
+    /**
+     * 从原始响应里提取最后一个 usage 对象，供日志汇总展示。
+     *
+     * <p>流式响应里 usage 通常只在最后一条事件出现（部分服务端需要
+     * {@code stream_options.include_usage}），所以从后往前找第一个即最近的那个。
+     *
+     * @return usage 的 JSON 文本；没有则返回 null，不占日志
+     */
+    private String extractUsage(String rawBody) {
+        if (rawBody == null || rawBody.isEmpty()) {
+            return null;
+        }
+        String[] lines = rawBody.split("\n");
+        for (int i = lines.length - 1; i >= 0; i--) {
+            String payload = lines[i].trim();
+            if (payload.startsWith("data:")) {
+                payload = payload.substring(5).trim();
+            }
+            if (!payload.startsWith("{") || payload.indexOf("usage") < 0) {
+                continue;
+            }
+            try {
+                JSONObject usage = new JSONObject(payload).optJSONObject("usage");
+                if (usage != null && usage.length() > 0) {
+                    return usage.toString();
+                }
+            } catch (Exception ignored) {
+                // 这一行不是合法 JSON，继续往前找
+            }
+        }
+        return null;
+    }
+
+    /** 累积一行原始数据。思考过程可能非常长，这里设一个上限，
      * 超出后只做标记，避免「查看原始返回」把内存吃光。
      */
     private void appendRaw(StringBuilder raw, String line) {
@@ -385,65 +503,9 @@ public class OpenAiEngine implements AiEngine {
                 }
             }
 
-            JSONArray messages = new JSONArray();
-            // 系统提示词放在第一条，为空时不下发
             String systemPrompt = config.getSystemPrompt();
-            if (systemPrompt != null && !systemPrompt.trim().isEmpty()) {
-                JSONObject system = new JSONObject();
-                system.put("role", "system");
-                system.put("content", systemPrompt);
-                messages.put(system);
-            }
-            if (toSend != null) {
-                for (ChatMessage msg : toSend) {
-                    if (msg.isError()) {
-                        continue; // 错误信息是本地提示，不能作为上下文回传
-                    }
-                    String content = msg.getContent();
-                    boolean emptyContent = content == null || content.isEmpty();
-
-                    // 工具结果消息：role=tool + tool_call_id
-                    if (msg.getRole() == ChatMessage.ROLE_TOOL) {
-                        JSONObject item = new JSONObject();
-                        item.put("role", "tool");
-                        item.put("tool_call_id", msg.getToolCallId());
-                        item.put("content", emptyContent ? "" : content);
-                        messages.put(item);
-                        continue;
-                    }
-                    // assistant 发起的工具调用
-                    List<ToolCall> calls = msg.getToolCalls();
-                    if (calls != null && !calls.isEmpty()) {
-                        JSONObject item = new JSONObject();
-                        item.put("role", "assistant");
-                        if (!emptyContent) {
-                            item.put("content", content);
-                        }
-                        JSONArray callsArray = new JSONArray();
-                        for (ToolCall call : calls) {
-                            JSONObject callObj = new JSONObject();
-                            callObj.put("id", call.getId());
-                            callObj.put("type", "function");
-                            JSONObject function = new JSONObject();
-                            function.put("name", call.getName());
-                            function.put("arguments",
-                                    call.getArguments() == null ? "" : call.getArguments());
-                            callObj.put("function", function);
-                            callsArray.put(callObj);
-                        }
-                        item.put("tool_calls", callsArray);
-                        messages.put(item);
-                        continue;
-                    }
-                    if (emptyContent) {
-                        continue; // 跳过占位中的空 AI 消息
-                    }
-                    JSONObject item = new JSONObject();
-                    item.put("role", msg.getRole() == ChatMessage.ROLE_USER ? "user" : "assistant");
-                    item.put("content", content);
-                    messages.put(item);
-                }
-            }
+            // 分层预算、历史裁剪与滚动摘要都在 ai.context 模块内，这里只取组装结果
+            JSONArray messages = contextManager.buildMessages(toSend, systemPrompt, withTools);
             JSONObject body = new JSONObject();
             body.put("model", config.getModel());
             body.put("stream", true);
@@ -477,98 +539,42 @@ public class OpenAiEngine implements AiEngine {
     }
 
     /**
-     * 解析一行 SSE data，取 choices[0].delta 的两类增量。
+     * 把一条已解析事件的 tool_calls 分片并进累积器。
      *
-     * @return 长度为 2 的数组：[0] 正式回答 content，[1] 思考过程 reasoning；
-     * 没有增量时返回 null，某一类没有增量时对应位置为空字符串。
+     * <p>delta.tool_calls 是数组，每个元素带 index，id / name / arguments
+     * 都是流式分片拼出来的，所以这里只做追加，不做覆盖。
      */
-    private String[] parseDelta(String payload) {
-        try {
-            JSONObject obj = new JSONObject(payload);
-            JSONArray choices = obj.optJSONArray("choices");
-            if (choices == null || choices.length() == 0) {
-                return null;
-            }
-            JSONObject delta = choices.getJSONObject(0).optJSONObject("delta");
-            if (delta == null) {
-                return null;
-            }
-            String content = delta.optString("content", null);
-            String reasoningText = delta.optString("reasoning", null);
-            if (reasoningText == null || reasoningText.isEmpty()) {
-                // 部分服务端（如 DeepSeek）使用 reasoning_content
-                reasoningText = delta.optString("reasoning_content", null);
-            }
-            return new String[]{
-                    content == null ? "" : content,
-                    reasoningText == null ? "" : reasoningText};
-        } catch (Exception e) {
-            return null;
+    private void mergeToolCallDeltas(ParsedEvent event, SparseArray<ToolCallBuilder> builders) {
+        if (event == null || event.toolCallDeltas == 0) {
+            return;
         }
-    }
-
-    /**
-     * 取 choices[0].finish_reason（stop / length / tool_calls 等）。
-     */
-    private String parseFinishReason(String payload) {
-        try {
-            JSONObject obj = new JSONObject(payload);
-            JSONArray choices = obj.optJSONArray("choices");
-            if (choices == null || choices.length() == 0) {
-                return null;
+        for (int i = 0; i < event.toolCallDeltas; i++) {
+            JSONObject call = event.toolCallArray.optJSONObject(i);
+            if (call == null) {
+                continue;
             }
-            return choices.getJSONObject(0).optString("finish_reason", null);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * 累积 SSE 里的 tool_calls 分片。
-     * delta.tool_calls 是数组，每个元素带 index，name / arguments 都是流式拼接出来的。
-     */
-    private void collectToolCallDeltas(String payload, SparseArray<ToolCallBuilder> builders) {
-        try {
-            JSONObject obj = new JSONObject(payload);
-            JSONArray choices = obj.optJSONArray("choices");
-            if (choices == null || choices.length() == 0) {
-                return;
+            int index = call.optInt("index", i);
+            ToolCallBuilder builder = builders.get(index);
+            if (builder == null) {
+                builder = new ToolCallBuilder();
+                builders.put(index, builder);
             }
-            JSONObject delta = choices.getJSONObject(0).optJSONObject("delta");
-            if (delta == null) {
-                return;
+            String id = call.optString("id", null);
+            if (id != null && !id.isEmpty() && !"null".equals(id)) {
+                builder.id = id;
             }
-            JSONArray calls = delta.optJSONArray("tool_calls");
-            if (calls == null) {
-                return;
+            JSONObject function = call.optJSONObject("function");
+            if (function == null) {
+                continue;
             }
-            for (int i = 0; i < calls.length(); i++) {
-                JSONObject call = calls.getJSONObject(i);
-                int index = call.optInt("index", i);
-                ToolCallBuilder builder = builders.get(index);
-                if (builder == null) {
-                    builder = new ToolCallBuilder();
-                    builders.put(index, builder);
-                }
-                String id = call.optString("id", null);
-                if (id != null && !id.isEmpty() && !"null".equals(id)) {
-                    builder.id = id;
-                }
-                JSONObject function = call.optJSONObject("function");
-                if (function == null) {
-                    continue;
-                }
-                String name = function.optString("name", null);
-                if (name != null && !name.isEmpty() && !"null".equals(name)) {
-                    builder.name.append(name);
-                }
-                String arguments = function.optString("arguments", null);
-                if (arguments != null && !arguments.isEmpty() && !"null".equals(arguments)) {
-                    builder.arguments.append(arguments);
-                }
+            String name = function.optString("name", null);
+            if (name != null && !name.isEmpty() && !"null".equals(name)) {
+                builder.name.append(name);
             }
-        } catch (Exception ignored) {
-            // 不是合法 JSON 就跳过
+            String arguments = function.optString("arguments", null);
+            if (arguments != null && !arguments.isEmpty() && !"null".equals(arguments)) {
+                builder.arguments.append(arguments);
+            }
         }
     }
 
