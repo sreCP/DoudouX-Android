@@ -86,7 +86,7 @@
     <string name="api_top_p">核采样（Top P）</string>
     <string name="api_top_p_hint">0 ~ 1，如 0.9；留空使用服务端默认</string>
     <string name="api_max_tokens">最大输出 Token</string>
-    <string name="api_max_tokens_hint">留空表示不限制</string>
+    <string name="api_max_tokens_hint">留空=用服务端默认（Ollama 默认仅 1024，思考过程会先占额度，建议填 8192 以上）</string>
     <string name="api_error_temperature">温度需填写 0 ~ 2 之间的数值</string>
     <string name="api_error_top_p">Top P 需填写 0 ~ 1 之间的数值</string>
     <string name="api_error_max_tokens">最大输出 Token 需为正整数</string>

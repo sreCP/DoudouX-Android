@@ -67,6 +67,8 @@ public class ApiSettingsActivity extends AppCompatActivity {
     private String currentId;
     /** 记录下拉当前位置，用于忽略 setSelection 触发的回弹回调。 */
     private int spinnerPosition = -1;
+    /** 正在回填表单：期间开关的 setChecked 回调不应落盘。 */
+    private boolean bindingForm = false;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -236,6 +238,17 @@ public class ApiSettingsActivity extends AppCompatActivity {
     }
 
     private void bindForm(ApiProfile profile) {
+        // 回填期间屏蔽开关回调：否则 setChecked 会触发 persistToggles，
+        // 把还没回填完的另外两个开关的旧值写进这套配置
+        bindingForm = true;
+        try {
+            bindFormInternal(profile);
+        } finally {
+            bindingForm = false;
+        }
+    }
+
+    private void bindFormInternal(ApiProfile profile) {
         etBaseUrl.setText(profile.getBaseUrl());
         etApiKey.setText(profile.getApiKey());
         etModel.setText(profile.getModel());
@@ -260,6 +273,9 @@ public class ApiSettingsActivity extends AppCompatActivity {
 
     /** 开关类参数立即写入当前配置并落盘（不依赖「保存」按钮）。 */
     private void persistToggles() {
+        if (bindingForm) {
+            return; // 正在回填表单，setChecked 触发的回调不算用户改动
+        }
         ApiProfile profile = currentProfile();
         if (profile == null) {
             return;

@@ -26,23 +26,38 @@ import java.util.concurrent.Executors;
 
 /**
  * OpenAI 兼容格式的真实 API 引擎。
- *
+ * <p>
  * 请求：POST {baseUrl}/chat/completions
- *   {"model": "...", "stream": true, "messages": [{"role":"user","content":"..."}]}
+ * {"model": "...", "stream": true, "messages": [{"role":"user","content":"..."}]}
  * 响应：SSE 流，逐行解析 "data: {...}"，
- *   取 choices[0].delta.content 增量拼成完整文本；
- *   "data: [DONE]" 结束。整个原始响应体会累计下来，
- *   随 onComplete / onError 回传，供「查看原始返回」使用。
+ * 取 choices[0].delta.content 增量拼成完整文本；
+ * "data: [DONE]" 结束。整个原始响应体会累计下来，
+ * 随 onComplete / onError 回传，供「查看原始返回」使用。
  */
 public class OpenAiEngine implements AiEngine {
 
-    /** 排查专用：Logcat 过滤该 tag 即可看到完整请求与原始响应。 */
+    /**
+     * 排查专用：Logcat 过滤该 tag 即可看到完整请求与原始响应。
+     */
     public static final String LOG_TAG = "DoudouX";
 
-    private static final int CONNECT_TIMEOUT_MS = 15000;
-    private static final int READ_TIMEOUT_MS = 60000;
-    /** Function Calling 最多自动接续的轮数，防止模型无限调用工具。 */
+    private static final int CONNECT_TIMEOUT_MS = 30000;
+    /**
+     * 流式读取超时：0 表示不限制。
+     * <p>
+     * 思考型模型（reasoning）在正式回答前可能长时间只吐思考内容、甚至静默很久，
+     * 之前固定 60s 会在思考还没结束时就被判成超时，这里改成不限制；
+     * 不想等了用界面上的「停止」按钮主动断开即可。
+     */
+    private static final int READ_TIMEOUT_MS = 0;
+    /**
+     * Function Calling 最多自动接续的轮数，防止模型无限调用工具。
+     */
     private static final int MAX_TOOL_ROUNDS = 3;
+    /**
+     * 原始响应最多保留的字符数，避免超长思考把内存撑爆。
+     */
+    private static final int MAX_RAW_CHARS = 1024 * 1024;
 
     private final ApiConfigStore config;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -52,7 +67,9 @@ public class OpenAiEngine implements AiEngine {
     private volatile boolean cancelled = false;
     private volatile HttpURLConnection activeConnection;
 
-    /** 最近一次请求的接口地址与请求体，供「测试连接」弹窗展示。 */
+    /**
+     * 最近一次请求的接口地址与请求体，供「测试连接」弹窗展示。
+     */
     private volatile String lastEndpoint = "";
     private volatile String lastRequestBody = "";
 
@@ -75,7 +92,9 @@ public class OpenAiEngine implements AiEngine {
         return lastRequestBody;
     }
 
-    /** 用一句 "hi" 打一次真实请求，用于验证配置是否正确。 */
+    /**
+     * 用一句 "hi" 打一次真实请求，用于验证配置是否正确。
+     */
     public void testConnection(StreamCallback callback) {
         List<ChatMessage> test = new ArrayList<>();
         test.add(new ChatMessage(ChatMessage.ROLE_USER, "hi"));
@@ -105,8 +124,8 @@ public class OpenAiEngine implements AiEngine {
     }
 
     /**
-     * @param roundsLeft        剩余可自动接续的工具轮数
-     * @param carriedToolCalls  之前轮次已执行的工具调用，用于最终一次性展示
+     * @param roundsLeft       剩余可自动接续的工具轮数
+     * @param carriedToolCalls 之前轮次已执行的工具调用，用于最终一次性展示
      */
     private void doRequest(List<ChatMessage> history, StreamCallback callback,
                            int roundsLeft, List<ToolCall> carriedToolCalls) {
@@ -126,8 +145,13 @@ public class OpenAiEngine implements AiEngine {
             conn.setRequestProperty("Accept", "text/event-stream");
             conn.setRequestProperty("Authorization", "Bearer " + config.getApiKey());
 
-            boolean toolsEnabled = config.isFunctionCallingEnabled() && toolExecutor != null
-                    && roundsLeft > 0;
+            boolean switchOn = config.isFunctionCallingEnabled();
+            boolean toolsEnabled = switchOn && toolExecutor != null && roundsLeft > 0;
+            // 排查用：请求体里没看到 tools 时，看这行就知道是被哪个条件挡住的
+            Log.d(LOG_TAG, "工具调用状态：开关=" + switchOn
+                    + "，执行器已注入=" + (toolExecutor != null)
+                    + "，剩余轮次=" + roundsLeft
+                    + "，本次下发 tools=" + toolsEnabled);
             String bodyJson = buildRequestBody(history, toolsEnabled);
             lastEndpoint = endpoint;
             lastRequestBody = bodyJson;
@@ -157,13 +181,15 @@ public class OpenAiEngine implements AiEngine {
                     new InputStreamReader(stream, StandardCharsets.UTF_8));
             String line;
             boolean done = false;
+            // 服务端给出的结束原因：length 表示被输出长度上限截断
+            String finishReason = null;
             // 工具调用分片累积：index → 调用
             final SparseArray<ToolCallBuilder> toolBuilders = new SparseArray<>();
             while ((line = reader.readLine()) != null) {
                 if (cancelled) {
                     return;
                 }
-                raw.append(line).append('\n');
+                appendRaw(raw, line);
                 // fixme 流式输出大量日志处
                 // SSE 每个事件之间会有一个空行，空行不打印，避免刷屏
                 if (!line.trim().isEmpty()) {
@@ -184,10 +210,10 @@ public class OpenAiEngine implements AiEngine {
                                 reasoning.append(nativeDelta[1]);
                                 changed = true;
                             }
-                    if (changed) {
-                        notifyToken(callback, answer.toString(), reasoning.toString());
-                    }
-                    if (isNativeDone(jsonLine)) {
+                            if (changed) {
+                                notifyToken(callback, answer.toString(), reasoning.toString());
+                            }
+                            if (isNativeDone(jsonLine)) {
                                 done = true;
                                 break;
                             }
@@ -201,6 +227,10 @@ public class OpenAiEngine implements AiEngine {
                     break;
                 }
                 collectToolCallDeltas(payload, toolBuilders);
+                String reason = parseFinishReason(payload);
+                if (reason != null) {
+                    finishReason = reason;
+                }
                 // 兼容思考型模型（Ollama / Qwen3 等）：
                 // delta.content 为正式回答，delta.reasoning 为思考过程
                 String[] delta = parseDelta(payload);
@@ -262,6 +292,13 @@ public class OpenAiEngine implements AiEngine {
                     doRequest(nextHistory, callback, roundsLeft - 1, allCalls);
                     return;
                 }
+                if ("length".equals(finishReason)) {
+                    // 常见原因：Ollama 的 num_predict 默认只有 1024，
+                    // 思考过程先把预算吃光，正式回答一个字都没出来
+                    Log.w(LOG_TAG, "输出被截断：服务端返回 finish_reason=length。"
+                            + "可在接口设置里把「最大输出 Token」填大（如 8192），"
+                            + "或关掉模型思考");
+                }
                 // 正式回答与思考过程分开回传，由界面决定怎么展示
                 notifyComplete(callback, answer.toString(), reasoning.toString(), raw.toString());
             }
@@ -276,7 +313,23 @@ public class OpenAiEngine implements AiEngine {
         }
     }
 
-    /** 尝试从错误响应里提取 message，便于气泡直接显示原因。 */
+    /**
+     * 累计一行原始数据。思考过程可能非常长，这里设一个上限，
+     * 超出后只做标记，避免「查看原始返回」把内存吃光。
+     */
+    private void appendRaw(StringBuilder raw, String line) {
+        if (raw.length() >= MAX_RAW_CHARS) {
+            return;
+        }
+        raw.append(line).append('\n');
+        if (raw.length() >= MAX_RAW_CHARS) {
+            raw.append("…（原始响应过长，已截断）\n");
+        }
+    }
+
+    /**
+     * 尝试从错误响应里提取 message，便于气泡直接显示原因。
+     */
     private String extractServerMessage(String rawBody) {
         if (rawBody == null || rawBody.isEmpty()) {
             return null;
@@ -300,7 +353,9 @@ public class OpenAiEngine implements AiEngine {
         }
     }
 
-    /** 只显示 key 首尾，避免完整密钥进日志。 */
+    /**
+     * 只显示 key 首尾，避免完整密钥进日志。
+     */
     private String maskKey(String key) {
         if (key == null || key.length() <= 12) {
             return "***";
@@ -308,7 +363,9 @@ public class OpenAiEngine implements AiEngine {
         return key.substring(0, 6) + "***" + key.substring(key.length() - 4);
     }
 
-    /** 构造 OpenAI 兼容请求体（默认带完整多轮上下文）。 */
+    /**
+     * 构造 OpenAI 兼容请求体（默认带完整多轮上下文）。
+     */
     private String buildRequestBody(List<ChatMessage> history, boolean withTools) {
         try {
             // 服务端不保存会话：完整历史由客户端每次回传；
@@ -451,6 +508,22 @@ public class OpenAiEngine implements AiEngine {
     }
 
     /**
+     * 取 choices[0].finish_reason（stop / length / tool_calls 等）。
+     */
+    private String parseFinishReason(String payload) {
+        try {
+            JSONObject obj = new JSONObject(payload);
+            JSONArray choices = obj.optJSONArray("choices");
+            if (choices == null || choices.length() == 0) {
+                return null;
+            }
+            return choices.getJSONObject(0).optString("finish_reason", null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
      * 累积 SSE 里的 tool_calls 分片。
      * delta.tool_calls 是数组，每个元素带 index，name / arguments 都是流式拼接出来的。
      */
@@ -499,7 +572,9 @@ public class OpenAiEngine implements AiEngine {
         }
     }
 
-    /** 把分片累积结果整理成工具调用列表。 */
+    /**
+     * 把分片累积结果整理成工具调用列表。
+     */
     private List<ToolCall> buildToolCalls(SparseArray<ToolCallBuilder> builders) {
         List<ToolCall> calls = new ArrayList<>();
         for (int i = 0; i < builders.size(); i++) {
@@ -517,7 +592,9 @@ public class OpenAiEngine implements AiEngine {
         return calls;
     }
 
-    /** tool_calls 分片累积器。 */
+    /**
+     * tool_calls 分片累积器。
+     */
     private static class ToolCallBuilder {
         String id;
         final StringBuilder name = new StringBuilder();
@@ -555,7 +632,9 @@ public class OpenAiEngine implements AiEngine {
         }
     }
 
-    /** Ollama 原生接口用 done=true 标记结束。 */
+    /**
+     * Ollama 原生接口用 done=true 标记结束。
+     */
     private boolean isNativeDone(String line) {
         try {
             return new JSONObject(line).optBoolean("done", false);
