@@ -2,11 +2,11 @@
 
 > 一个 Android 原生 AI 聊天客户端，人设是「白色汤圆团子宠物兜兜」。
 > 后端接任意 **OpenAI 兼容接口**，同时兼容 **Ollama 原生 NDJSON**；
-> 会话数据全部留在本地，服务端不保存上下文。
+> 会话数据全部留在本地，上下文由客户端全权维护。
 
-**但这个项目真正的核心不是聊天界面，而是它内部那套从零手写的 Agent Runtime**——
+**这个项目的核心是它内部那套从零手写的 Agent Runtime，聊天界面只是它的载体**——
 手写 SSE 流式协议解析、Function Calling 多轮状态机、分层上下文预算与滚动压缩。
-没有 LangChain，没有官方 SDK，网络层用的是 `HttpURLConnection`，JSON 用的是 Android 自带的 `org.json`，
+网络层基于 `HttpURLConnection`，JSON 基于 Android 自带的 `org.json`，
 所有协议细节和调度逻辑都是逐行实现的。
 
 ---
@@ -41,34 +41,36 @@
   - [6.8 延迟一轮生效的取舍](#68-延迟一轮生效的取舍)
   - [6.9 会话 key 与持久化](#69-会话-key-与持久化)
   - [6.10 完整调用链](#610-完整调用链)
-- [7. 流式日志 StreamLogger](#7-流式日志-streamlogger)
-- [8. Markdown 渲染](#8-markdown-渲染)
-- [9. 数据与配置](#9-数据与配置)
-- [10. 已知坑与解决方案](#10-已知坑与解决方案)
-- [11. 设计取舍](#11-设计取舍)
-- [12. 路线图](#12-路线图)
-- [13. 附录：关键代码索引](#13-附录关键代码索引)
+- [7. 记忆系统：三层记忆](#7-记忆系统三层记忆)
+  - [7.1 三层划分的依据](#71-三层划分的依据)
+  - [7.2 记忆条目与遗忘评分](#72-记忆条目与遗忘评分)
+  - [7.3 冲突消解](#73-冲突消解)
+  - [7.4 抽取：只记该记的](#74-抽取只记该记的)
+  - [7.5 检索：字符 bigram Jaccard](#75-检索字符-bigram-jaccard)
+  - [7.6 注入上下文的位置](#76-注入上下文的位置)
+  - [7.7 完整流程](#77-完整流程)
+- [8. 流式日志 StreamLogger](#8-流式日志-streamlogger)
+- [9. Markdown 渲染](#9-markdown-渲染)
+- [10. 数据与配置](#10-数据与配置)
+- [11. 已知坑与解决方案](#11-已知坑与解决方案)
+- [12. 设计取舍](#12-设计取舍)
+- [13. 路线图](#13-路线图)
+- [14. 附录：关键代码索引](#14-附录关键代码索引)
 
 ---
 
 ## 1. 项目定位
 
-### 这是什么
+### 项目速览
 
 | 维度 | 说明 |
 |---|---|
 | 类型 | Android 原生 AI 聊天客户端 |
-| 语言 | 纯 Java（JDK 17 语法），无 Kotlin |
+| 语言 | 纯 Java（JDK 17 语法） |
 | 包名 | `com.doudou.x` |
 | 后端 | 任意 OpenAI 兼容接口，或 Ollama 原生接口 |
-| 数据 | 全部存本地 `SharedPreferences`，服务端无状态 |
-| 规模 | 约 6900 行 Java，其中 AI 与上下文相关约 2600 行 |
-
-### 这不是什么
-
-- **不是**一个套壳 WebView 应用——所有协议解析都在原生层完成。
-- **不是**一个 LangChain Demo——没有引入任何 LLM 框架，协议与调度都是手写的。
-- **不是**一个只做单轮问答的玩具——已经实现了完整的工具调用循环和上下文治理。
+| 数据 | 全部存本地 `SharedPreferences`，会话状态由客户端持有 |
+| 规模 | 约 7900 行 Java，其中 AI / 上下文 / 记忆相关约 3600 行 |
 
 ### 三个值得一看的技术点
 
@@ -76,8 +78,10 @@
    同时兼容 OpenAI 的 SSE 与 Ollama 的 NDJSON，两条分支共用同一套状态累积逻辑。
 2. **Function Calling 多轮状态机**：工具调用的分片合并、本地执行、结果回灌、递归下一轮，
    全部在引擎内部闭环，UI 只负责展示。
-3. **上下文工程**：分层预算 + 按组裁剪 + 滚动压缩。长对话不再全量回传，
-   而是按优先级裁剪，超出部分压成结构化摘要，且只压增量。
+3. **上下文工程**：分层预算 + 按组裁剪 + 滚动压缩。长对话按优先级裁剪，
+   超出部分压成结构化摘要，且只压增量。
+4. **三层记忆系统**：情景 / 语义 / 程序三类记忆各有独立的半衰期，
+   抽取、冲突消解、遗忘淘汰、按需召回形成闭环——对话因此能跨会话"记住"用户。
 
 ---
 
@@ -111,20 +115,20 @@
 
 配置项是**多套并存**的（`ApiProfile` + `active_id`），可以随手切换、重命名、删除（至少保留 1 套）。
 
-**如果三项没填全，App 会自动降级到 `MockAiEngine`**——本地生成逐字流式回复，
-让你在没有接口的情况下也能体验打字机效果和 Markdown 渲染。
+**接口三项填全之前，App 会走 `MockAiEngine`**——本地生成逐字流式回复，
+用来体验打字机效果和 Markdown 渲染。
 
 ### 可选参数
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| System Prompt | 空 | 为空时不下发 system 消息 |
-| Temperature | 未设置 | 负数表示不下发，用服务端默认 |
-| Top P | 未设置 | 同上 |
-| 最大输出 Token | 0（不限制） | **注意**：留空不等于不限制，见 [10.1](#101-ollama-的-1024-天花板) |
+| System Prompt | 空 | 留空时请求体省略 system 消息 |
+| Temperature | 留空 | 留空时该字段省略，取服务端默认 |
+| Top P | 留空 | 同上 |
+| 最大输出 Token | 0（跟随服务端上限） | **注意**：留空即取服务端默认（Ollama 为 1024），见 [10.1](#101-ollama-的-1024-天花板) |
 | 发送完整对话历史 | 开 | 关掉则每轮只发当前这一句 |
 | 关闭模型思考 | 关 | 下发 `reasoning_effort=none` |
-| 启用 Function Calling | 关 | 小模型大多不支持，默认关闭 |
+| 启用 Function Calling | 关 | 依赖模型能力，按需开启 |
 
 ---
 
@@ -151,6 +155,12 @@
 │  ContextManager ─ ContextAssembler ─ RollingCompressor   │
 │  ContextBudget · TokenEstimator · SummaryStore           │
 └───────────────────────┬─────────────────────────────────┘
+                        │ 召回（同步）/ 抽取（异步）
+┌───────────────────────▼─────────────────────────────────┐
+│  记忆层  ai/memory/                                      │
+│  MemoryManager ─ MemoryRetriever ─ MemoryExtractor       │
+│  MemoryStore · MemoryItem · MemoryType                   │
+└───────────────────────┬─────────────────────────────────┘
                         │
 ┌───────────────────────▼─────────────────────────────────┐
 │  数据层  data/ + model/                                  │
@@ -170,7 +180,8 @@ app/src/main/java/com/doudou/x/
 │   ├── ToolRegistry.java         工具声明（tools[] JSON Schema）+ 执行
 │   ├── ToolExecutor.java         工具执行器接口
 │   ├── StreamLogger.java         流式日志整理
-│   └── context/                  ★ 上下文工程
+│   ├── context/                  ★ 上下文工程（预算分层 + 滚动压缩）
+│   └── memory/                   ★ 三层记忆（情景 / 语义 / 程序）
 │       ├── ContextManager.java       门面，对引擎只暴露一个方法
 │       ├── ContextAssembler.java     分层预算 + 按组裁剪
 │       ├── ContextBudget.java        分层配额
@@ -218,7 +229,7 @@ MainActivity.onSendClicked()
 ```
 
 UI 侧有 80ms 的节流刷新，`ChatAdapter` 还额外走一条「流式快速通道」——
-流式期间只 `setText`，不重新解析 Markdown，避免每个 token 都重建视图结构。
+流式期间只 `setText`，Markdown 等到生成结束后统一解析，视图结构保持稳定。
 
 ---
 
@@ -228,7 +239,7 @@ UI 侧有 80ms 的节流刷新，`ChatAdapter` 还额外走一条「流式快速
 
 ### 4.1 统一引擎抽象
 
-引擎只有一个接口，真实引擎和模拟引擎实现同一套回调，上层按配置切换，不关心实现细节。
+引擎只有一个接口，真实引擎和模拟引擎实现同一套回调，上层按配置切换。
 
 ```java
 public interface AiEngine {
@@ -264,11 +275,11 @@ public interface AiEngine {
 
 几个设计点：
 
-- **`onToken` 传的是累计全文而不是增量**。这样即使 UI 侧因为节流丢掉几次回调，
-  下一次拿到的数据依然是完整的，不会出现丢字。代价是每次多传一些字节，换来的是状态简单。
-- **回调一律 post 到主线程**（`mainHandler.post`），引擎内部的工作线程从不直接碰 UI。
+- **`onToken` 传的是累计全文**。UI 侧即使因为节流丢掉几次回调，
+  下一次拿到的依然是完整全文，内容始终对齐。代价是每次多传一些字节，换来的是状态简单。
+- **回调一律 post 到主线程**（`mainHandler.post`），引擎内部的工作线程与 UI 完全隔离。
 - **`cancel()` 是协作式的**：置 `cancelled` 标志 + `disconnect()`，
-  循环每一轮都会检查标志，退出时不会抛异常打断流程。
+  循环每一轮都会检查标志，退出时走正常收尾路径。
 
 引擎的线程模型很朴素——单线程池：
 
@@ -325,8 +336,8 @@ if (!config.isSendFullHistory() && history != null) {
 }
 ```
 
-注意这里**从后往前找最后一条 user 消息**，而不是取 `history` 的最后一个元素——
-因为最后一条很可能是占位中的 AI 消息。
+注意这里**从后往前找最后一条 user 消息**——
+因为 `history` 的最后一个元素很可能是占位中的 AI 消息。
 
 #### 组装请求体
 
@@ -374,14 +385,14 @@ if (withTools) {
 | `model` | 总是 | — |
 | `stream` | 总是 `true` | 全程走流式 |
 | `messages` | 总是 | 由上下文模块生成 |
-| `temperature` | `>= 0` | 负数代表"未设置"，不下发以使用服务端默认 |
+| `temperature` | `>= 0` | 负数代表"用户留空"，该字段整体省略以取服务端默认 |
 | `top_p` | `>= 0` | 同上 |
-| `max_tokens` | `> 0` | 0 代表"不限制" |
+| `max_tokens` | `> 0` | 0 代表"跟随服务端上限" |
 | `reasoning_effort` | 开关打开时 | 值为 `"none"` |
 | `tools` | 三道闸门全过（见 5.4） | 同时下发 `tool_choice: "auto"` |
 
-**为什么要区分"未设置"和"零值"**：如果直接把 0 下发给服务端，
-`temperature=0` 是让模型完全确定性输出，和"用户没填"是完全不同的语义。
+**为什么要区分"留空"和"零值"**：如果直接把 0 下发给服务端，
+`temperature=0` 是让模型完全确定性输出，与"用户留空"是截然不同的语义。
 所以 `ApiProfile` 里用 `VALUE_UNSET = -1f` 和 `MAX_TOKENS_UNLIMITED = 0` 两套哨兵值分开表达。
 
 ### 4.3 连接与超时策略
@@ -398,14 +409,14 @@ conn.setRequestProperty("Accept", "text/event-stream");
 conn.setRequestProperty("Authorization", "Bearer " + config.getApiKey());
 ```
 
-**读超时设为 0（不限制）是这个项目踩过坑之后的结果。**
+**读超时设为 0（由用户主动决定终点）是这个项目踩过坑之后的结果。**
 
 思考型模型在正式回答之前，可能长时间只吐 reasoning 内容，甚至完全静默几十秒。
-之前固定 60s 会在思考还没结束时就判成超时，用户看到的是"请求失败"，
-但实际上服务端一切正常、只是还在想。改成不限制之后，不想等了用界面上的「停止」按钮主动断开即可。
+之前固定 60s 会在思考进行到一半时就判成超时，用户看到的是"请求失败"，
+但实际上服务端一切正常、只是还在想。放开时长之后，需要中断时用界面上的「停止」按钮主动断开即可。
 
 配套的兜底：原始响应用 `MAX_RAW_CHARS`（1MB）截断累积，
-避免超长思考过程把内存撑爆。
+给超长思考过程留出内存上限。
 
 ```java
 /** 累积一行原始数据。超出上限后只做标记，避免把内存吃光。 */
@@ -502,9 +513,9 @@ private static String optText(JSONObject obj, String key) {
 
 两个细节：
 
-1. **`optText` 把三种情况统一成空串**——字段缺失、字段为 JSON `null`、字段为字符串 `"null"`。
+1. **`optText` 把三种情况统一成空串**——字段被省略、字段为 JSON `null`、字段为字符串 `"null"`。
    `org.json` 的 `optString` 在字段值是 JSON null 时会返回字符串 `"null"`，
-   这个坑不处理的话，界面上会真的显示出一个 `null`。
+   这个坑一旦放过，界面上会真的显示出一个 `null`。
 2. **思考字段兼容两种命名**：`reasoning`（Ollama / Qwen3）和 `reasoning_content`（DeepSeek），
    先取前者，为空再取后者。
 
@@ -573,16 +584,16 @@ reader.close();
 ```
 
 **思考过程和正式回答是两个独立的 `StringBuilder`**——
-不能混在一起累积，否则界面上没法把"思考中"和正式回答分开渲染，
+分开累积，界面上才能把"思考中"和正式回答分开渲染，
 最后 `notifyComplete` 也是分开回传的。
 
-**空行跳过**：SSE 事件之间是空行，没有信息量，既不解析也不进日志。
+**空行跳过**：SSE 事件之间的空行只作分隔，直接跳过。
 
 ### 4.5 Ollama 原生 NDJSON 兼容
 
 OpenAI 兼容接口返回 `data: {...}` 形式的 SSE，
 但 Ollama 的 `/api/chat`、`/api/generate` 直接返回一行一个 JSON 的 NDJSON。
-所以凡是**不以 `data:` 开头、但以 `{` 开头**的行，都走另一条解析路径：
+Ollama 每行都是一个裸 JSON 对象，所以凡是**以 `{` 起头的行**都走另一条解析路径：
 
 ```java
 /**
@@ -650,11 +661,11 @@ if (code < 200 || code >= 300) {
 | 分支 | 条件 | 行为 |
 |---|---|---|
 | HTTP 失败 | `code < 200 || >= 300` | 附带服务端 `message`，用户直接看到原因 |
-| 空响应 | 无回答、无思考、无工具 | 区分「响应内容为空」（正常收到 `[DONE]`）和「流意外中断」 |
+| 空响应 | 回答、思考、工具均为空 | 用于区分「正常收到 `[DONE]` 且内容为空」与「流意外中断」 |
 | 工具调用 | 有 `tool_calls` | 见[第 5 章](#5-function-calling多轮工具调用) |
 | 正常结束 | 其余 | `finish_reason` 检查 + `notifyComplete` |
 
-**HTTP 错误也要读 `getErrorStream()`**，否则拿不到服务端返回的 JSON 错误体，
+**HTTP 错误也要读 `getErrorStream()`**，服务端返回的 JSON 错误体就在这里，
 用户只能看到一个干巴巴的 `HTTP 404`。
 
 ```java
@@ -733,7 +744,7 @@ private String extractUsage(String rawBody) {
 ```
 
 先用 `indexOf("usage")` 做一次廉价的字符串过滤，再尝试解析 JSON——
-避免对几百行数据逐行 `new JSONObject`。
+把几百行数据的解析次数降到常数级。
 
 日志里的密钥也做了脱敏：
 
@@ -751,7 +762,7 @@ private String maskKey(String key) {
 
 ## 5. Function Calling：多轮工具调用
 
-这部分是「聊天机器人」和「Agent」的分界线：模型不只会说话，还能要求客户端替它执行动作，
+这部分是「聊天机器人」和「Agent」的分界线：模型既能说话，也能要求客户端替它执行动作，
 拿到结果后继续思考，直到给出最终答案。
 
 ### 5.1 工具声明
@@ -795,7 +806,7 @@ public static JSONArray toolsJson() {
 }
 ```
 
-执行侧**永不抛异常**——工具返回值是要喂回模型的，抛异常会让整轮对话挂掉：
+执行侧**始终返回结果**——工具返回值是要喂回模型的，异常在这里被转成错误文本：
 
 ```java
 /** 执行工具，返回给模型的结果文本（永不抛异常）。 */
@@ -827,12 +838,12 @@ public static String execute(String name, String argumentsJson) {
 }
 ```
 
-**注意 `required` 是空数组**——`format` 是可选参数，不强制模型填。
-如果 `arguments` 解析失败（模型常常吐出不合法 JSON），就退回默认格式而不是报错。
+**注意 `required` 是空数组**——`format` 是可选参数，由模型自行决定是否填。
+如果 `arguments` 解析失败（模型常常吐出畸形 JSON），就退回默认格式继续走流程。
 
 > **为什么只做只读工具？**
 > 这是有意为之。小模型（尤其是本地跑的那些）判断力有限，
-> 一旦放开有副作用的工具（发消息、删文件、调接口），后果不可控。
+> 有副作用的工具（发消息、删文件、调接口）需要配套确认与审计，已列入路线图。
 > 当前阶段只保留只读能力，是安全性上的取舍。
 
 ### 5.2 流式分片合并
@@ -895,9 +906,9 @@ private void mergeToolCallDeltas(ParsedEvent event, SparseArray<ToolCallBuilder>
 
 两个要点：
 
-1. **只追加不覆盖**。分片会重复带上已发过的部分，覆盖会导致内容错乱。
-2. **用 `SparseArray<ToolCallBuilder>` 而不是 `Map<Integer, ...>`**。
-   `index` 是小整数，SparseArray 在 Android 上避免了自动装箱。
+1. **只追加**。每个分片都作为增量接到尾部，覆盖会破坏已累积的内容。
+2. **用 `SparseArray<ToolCallBuilder>` 承载分片**。
+   `index` 是小整数，SparseArray 在 Android 上省掉了自动装箱。
 
 收尾时整理成列表：
 
@@ -920,7 +931,7 @@ private List<ToolCall> buildToolCalls(SparseArray<ToolCallBuilder> builders) {
 }
 ```
 
-如果模型没给 `id`（有些服务端确实不给），这里补一个 `call_<序号>`——
+如果模型省略了 `id`（部分服务端确实如此），这里补一个 `call_<序号>`——
 因为下一步构造 `role=tool` 消息时必须要 `tool_call_id` 才能对上。
 
 ### 5.3 多轮循环
@@ -976,14 +987,14 @@ assistant  { content: "最终回答" }
 几个容易出错的地方：
 
 - **`assistant` 那条消息的 `content` 是空的**，工具调用信息全在 `tool_calls` 里。
-  序列化时如果 content 为空就不要下发这个字段（见 `ContextMessage.toJson()`）。
+  序列化时如果 content 为空则省略该字段（见 `ContextMessage.toJson()`）。
 - **每条 `role=tool` 必须带 `tool_call_id`**，且要和前面 `tool_calls` 里的 `id` 对得上。
 - **`carriedToolCalls` 跨轮累积**：最终 `onToolCall` 回调给用户的是所有轮次的调用总和，
-  界面上一次展示完整的调用轨迹，而不是只看到最后一轮。
+  界面上一次展示完整的调用轨迹，覆盖每一轮。
 
 ### 5.4 三道闸门与诊断日志
 
-tools 不是无条件下发的，要过三道闸门：
+tools 的下发要过三道闸门：
 
 ```java
 boolean switchOn = config.isFunctionCallingEnabled();          // 设置页开关，默认 false
@@ -997,11 +1008,11 @@ Log.d(LOG_TAG, "工具调用状态：开关=" + switchOn
 
 | 闸门 | 含义 | 为什么需要 |
 |---|---|---|
-| `isFunctionCallingEnabled()` | 设置页开关，默认关 | 大多数小模型不支持，无脑下发会拖慢请求 |
-| `toolExecutor != null` | 是否注入了执行器 | 生成标题的引擎不注入，避免小模型乱调用 |
-| `roundsLeft > 0` | 还剩轮次 | 最后一轮不再下发，防止无限循环 |
+| `isFunctionCallingEnabled()` | 设置页开关，默认关 | 只给支持工具调用的模型开启，请求更轻 |
+| `toolExecutor != null` | 是否注入了执行器 | 生成标题这类轻量请求走独立引擎 |
+| `roundsLeft > 0` | 还剩轮次 | 最后一轮单独收口，循环次数有上界 |
 
-这行诊断日志是踩坑的产物——排查"请求体里为什么没有 tools"时，
+这行诊断日志是踩坑的产物——确认 tools 是否真的进了请求体时，
 有了它能一眼看出是哪个条件挡住的。
 
 注入时机（`MainActivity.onCreate`）：
@@ -1023,19 +1034,19 @@ titleEngine = new OpenAiEngine(apiConfig);   // 不注入执行器
 
 ### 5.5 轮次上限与降级
 
-`MAX_TOOL_ROUNDS = 3`，用尽之后**不是返回空消息，而是明确报错**：
+`MAX_TOOL_ROUNDS = 3`，用尽之后**明确报错**：
 
 ```java
 notifyError(callback, "工具调用轮次已达上限（最多 "
         + MAX_TOOL_ROUNDS + " 轮），已停止", raw.toString());
 ```
 
-返回空消息是最糟的处理——用户完全不知道发生了什么。
+返回空消息的处理效果最差——界面上只剩一片空白。
 给一条明确的提示，用户至少知道是轮次用完了，可以换个问法或调大上限。
 
-另外，`roundsLeft > 0` 这个闸门意味着**最后一轮的请求不带 tools**，
-所以模型在最后一轮物理上不可能再发起工具调用，循环一定会终止。
-这是双保险：既有限次数的软限制，也有不下发工具的硬限制。
+另外，`roundsLeft > 0` 这个闸门意味着**最后一轮的请求只带对话**，
+所以模型在最后一轮握有的只有对话，循环必然终止。
+这是双保险：既有轮次上限的软限制，也有剥离工具的硬限制。
 
 ---
 
@@ -1046,19 +1057,19 @@ notifyError(callback, "工具调用轮次已达上限（最多 "
 
 ### 6.1 动机
 
-服务端不保存会话，客户端每次都要把完整历史回传。对话一长就会遇到三个问题：
+会话状态由客户端持有，每次请求都要把完整历史回传。对话一长就会遇到三个问题：
 
 | 问题 | 表现 |
 |---|---|
 | 超窗 | 历史超过模型上下文窗口，服务端直接报错 |
 | 成本 | 每轮重复发送几千 token 的旧对话，钱和延迟都翻倍 |
-| 降质 | 关键信息被淹没在大量无关历史里，模型注意力被稀释 |
+| 降质 | 关键信息被淹没在大量低相关历史里，模型注意力被稀释 |
 
 朴素的解决办法是"截断前面的历史"，但这样会丢掉早期确认过的事实和用户目标，
 对话越长越明显——模型会逐渐"失忆"。
 
 本项目采用的是：**分层预算裁剪 + 滚动摘要压缩**。
-近期对话原样保留，更早的对话压成结构化摘要，摘要只往前滚、不回头重写。
+近期对话原样保留，更早的对话压成结构化摘要，摘要只往前滚动。
 
 ### 6.2 分层预算模型
 
@@ -1111,16 +1122,16 @@ public final class ContextBudget {
         系统提示词、工具声明：只做上限保护，不参与裁剪
 ```
 
-前两层不参与裁剪，是因为砍掉它们会直接改变模型行为——
-系统提示词定人设，工具声明定能力，都不该因为对话长了就消失。
+前两层固定保留，是因为改动它们会直接改变模型行为——
+系统提示词定人设，工具声明定能力，二者的地位与对话长度脱钩。
 
 `historyBudget` 用 `Math.min(x, reserve)` 夹紧：某一层超出配额时，
-按配额计入而不是按实际值，这样不会出现"系统提示词太长导致历史预算变成负数"。
+按配额计入，历史预算因此恒为正——系统提示词再长也压不到零以下。
 最后 `Math.max(left, 256)` 保证再紧也有 256 token 给最近一轮。
 
 ### 6.3 token 估算
 
-端侧拿不到真实 tokenizer，用启发式估算即可——**估高的后果只是少发一点历史，不会有超窗风险**。
+端侧只有启发式估算可用——**估算偏高只是少发一点历史，换来的是超窗风险的归零**。
 
 ```java
 /** 单条消息的固定开销：role、content 键名与分隔符。 */
@@ -1167,7 +1178,7 @@ private static boolean isCjk(char c) {
 ### 6.4 按组裁剪算法
 
 **这是裁剪里最容易踩的坑**：如果只留下 `assistant` 的 `tool_calls` 而丢掉了对应的
-`role=tool` 结果，多数服务端会直接返回 400。所以裁剪不能按单条消息做，要以「组」为单位。
+`role=tool` 结果，多数服务端会直接返回 400。所以裁剪以「组」为单位整体进行。
 
 ```java
 /**
@@ -1223,7 +1234,7 @@ for (int i = groups.size() - 1; i >= 0; i--) {
 ```
 
 **为什么从后往前**：对话的重要性基本随时间递减，最新的内容最有价值。
-从后往前装，装不下时剩下的自然是最老的，直接整组丢弃，逻辑最简。
+从后往前装，溢出部分的自然是最老的，直接整组淘汰，逻辑最简。
 
 保护窗口的起点：
 
@@ -1248,13 +1259,13 @@ private static int protectFrom(List<List<ContextMessage>> groups, int keepTurns)
 }
 ```
 
-以 **user 消息**为轮的边界（而不是按消息条数），
-这样"一轮"就是语义完整的"一问一答"，保护窗口里不会出现半截对话。
+以 **user 消息**为轮的边界，
+这样"一轮"就是语义完整的"一问一答"，保护窗口里始终是一段完整对话。
 
 ### 6.5 保护窗口与截断
 
 受保护的最近几轮自身也可能超预算（比如用户贴了一大段代码）。
-这时不能丢弃——丢了模型就看不到当前提问了——只能截断内容：
+这时保留整轮、只截断内容——当前提问必须留在窗口里：
 
 ```java
 // 受保护窗口自身就可能超预算：从最早的一条开始截断，直到装得下
@@ -1302,13 +1313,13 @@ public ContextMessage truncateTo(int budgetTokens) {
 }
 ```
 
-因为字符数和 token 数不是线性关系（中英混排），先按比例缩一次，
-再用 `estimate` 验证，不满足就打九折重试，最多四次。保留了开头，并追加 `…（已截断）` 标记，
+因为字符数和 token 数在中英混排下是非线性的，先按比例缩一次，
+再用 `estimate` 验证，超出就打九折重试，最多四次。保留了开头，并追加 `…（已截断）` 标记，
 让模型知道这段被截过。
 
 ### 6.6 滚动压缩
 
-裁剪解决"装不下"，压缩解决"记不住"。
+裁剪解决"装得下"，压缩解决"记得住"。
 
 ```java
 /**
@@ -1362,7 +1373,7 @@ private static int compactEnd(List<ChatMessage> history, ContextBudget budget) {
 }
 ```
 
-为什么要留最近几轮不压：这几轮本来就会原样发给模型，压进摘要反而重复。
+为什么要留最近几轮：这几轮本来就会原样发给模型，压进摘要反而重复。
 
 **执行压缩**：
 
@@ -1402,7 +1413,7 @@ public void compactAsync(final List<ChatMessage> history, final String sessionKe
 }
 ```
 
-参与摘要的内容渲染成纯文本，**思考过程不进摘要**（太占篇幅且对后续无价值）：
+参与摘要的内容渲染成纯文本，**只取正式回答**（思考过程篇幅占比高、后续复用价值低）：
 
 ```java
 /** 把 [from, to) 渲染成纯文本。 */
@@ -1442,17 +1453,17 @@ private static final String SUMMARY_PROMPT =
                 + "总长度不超过 400 字，没有的部分写「无」。";
 ```
 
-**为什么是这四段，而不是"请总结这段对话"**：
+**为什么摘要要按这四段组织**：
 
 | 段落 | 作用 |
 |---|---|
 | 用户目标 | 长对话里最容易走偏的就是忘了最初要干什么 |
 | 已确认事实 | 用户说过的偏好、约束、背景，丢了就要重新问一遍 |
-| **已尝试但失败的方案** | 最关键的一段——没有它，模型会反复尝试同一个已经失败的做法 |
-| 待办与未完成事项 | 多步任务中断后的续跑依据 |
+| **已尝试但失败的方案** | 价值最高的一段——有了它，模型才会绕开验证失败的做法 |
+| 待办事项 | 多步任务中断后的续跑依据 |
 
 "已尝试但失败的方案"这一条是 Agent 实践里价值最高的：
-模型没有它就会在同一个坑里反复打转，用户看到的是"它怎么又来一遍"。
+有了它，模型就能绕开已经走过的坑，用户看到的是"它在推进"。
 
 ### 6.8 延迟一轮生效的取舍
 
@@ -1469,10 +1480,10 @@ private static final String SUMMARY_PROMPT =
 ```
 
 **代价**：压缩结果延迟一轮生效。
-**收益**：引擎的异步流程一行都不用改，压缩失败也完全不影响对话。
+**收益**：引擎的异步流程维持现状，压缩失败也与对话链路隔离。
 
-这个取舍在这个场景里是划算的——压缩是"优化"而不是"必需"，
-晚一轮用上最多多花一点 token，不会让功能失效。
+这个取舍在这个场景里是划算的——压缩属于"优化"，
+晚一轮用上最多多花一点 token，功能链路保持可用。
 
 门面里的实现：
 
@@ -1536,7 +1547,7 @@ private void maybeCompact(final List<ChatMessage> history, final String sessionK
 }
 ```
 
-三重保护：未配置真实接口不压缩、增量不够不压缩、同一会话并发只压一次。
+三重门槛：真实接口配置就绪才压缩、增量达到条数才压缩、同一会话并发只压一次。
 
 ### 6.9 会话 key 与持久化
 
@@ -1555,7 +1566,7 @@ private static String sessionKey(List<ChatMessage> history) {
 }
 ```
 
-为什么要这么定 key：引擎拿到的只有 `List<ChatMessage>`，没有会话 id。
+为什么要这么定 key：引擎手上的入参是 `List<ChatMessage>`，这一层能拿到的稳定标识只有首条消息。
 而同一个会话的第一条消息（用户发送的第一句话）在整轮对话里是恒定的，
 用它做标识既能跨轮命中，也能在 App 重启后命中同一份摘要。
 
@@ -1572,7 +1583,7 @@ public static final class Summary {
 ```
 
 `compressedCount` 是滚动压缩能省 token 的关键——
-没有它，每次都要把全部历史重新压一遍，长对话下开销会二次增长。
+有了它，每次只压新增的那一段，长对话下的开销保持线性。
 
 存储还有两个保护：
 
@@ -1618,13 +1629,305 @@ OpenAiEngine.buildRequestBody(history, withTools)
 
 ---
 
-## 7. 流式日志 StreamLogger
+## 7. 记忆系统：三层记忆
+
+> 代码在 `app/src/main/java/com/doudou/x/ai/memory/`，6 个文件。
+> 与上下文模块共用同一套节拍：召回同步、抽取异步且延迟一轮生效。
+
+### 7.1 三层划分的依据
+
+分层的依据是**这条记忆的有效期有多长**——
+不同信息的保质期差好几个数量级，分开存才能设计各自合理的遗忘策略。
+
+| 类型 | 存什么 | 半衰期 | 召回权重 |
+|---|---|---|---|
+| **情景** `EPISODIC` | 某次对话聊了什么、结论是什么 | 3 天 | 1.0 |
+| **语义** `SEMANTIC` | 关于用户的稳定事实（身份、偏好、约束） | 30 天 | 1.2 |
+| **程序** `PROCEDURAL` | 用户要求的做事方式与输出格式 | 365 天 | 1.5 |
+
+```java
+public enum MemoryType {
+
+    /**
+     * 情景记忆：某次对话聊了什么、结论是什么。
+     * 只对后续相似话题有用，忘得最快。
+     */
+    EPISODIC("episodic", "情景", 3 * 24 * 3600_000L, 1.0f),
+
+    /**
+     * 语义记忆：关于用户的稳定事实（身份、偏好、约束）。
+     * 变化慢，长期有效。
+     */
+    SEMANTIC("semantic", "语义", 30 * 24 * 3600_000L, 1.2f),
+
+    /**
+     * 程序记忆：用户要求的工作方式与输出格式。
+     * 一旦形成几乎不会变，所以半衰期设得极长。
+     */
+    PROCEDURAL("procedural", "程序", 365 * 24 * 3600_000L, 1.5f);
+}
+```
+
+**程序记忆是个特殊角色**：它描述"怎么做事"（先给结论、代码要可运行），
+和当前提问的字面相关度很低，但影响的是整轮回答的风格。
+所以它**按遗忘分直接取前几条固定带上**——见 [7.5](#75-检索字符-bigram-jaccard)。
+
+### 7.2 记忆条目与遗忘评分
+
+```java
+public final class MemoryItem {
+    private final String id;
+    private final MemoryType type;
+    /** 主语 / 主题，冲突消解就靠它。 */
+    private final String key;
+    private String content;
+    private long accessedAt;
+    private int hits;
+    /** 抽取时的把握程度，参与遗忘排序。 */
+    private float confidence;
+
+    /**
+     * 遗忘评分：命中越多、越近访问、越可信、类型越稳定，分越高。
+     *
+     * <p>时间衰减用指数形式：过了半衰期得分减半，
+     * 而不是「超过 N 天直接删除」——后者会让记忆库出现断崖。
+     */
+    public float score(long now) {
+        long age = Math.max(0L, now - accessedAt);
+        double decay = Math.pow(0.5, age / (double) type.getHalfLifeMs());
+        return (1f + hits * 0.5f) * (float) decay * confidence * type.getRecallWeight();
+    }
+}
+```
+
+三个输入共同决定一条记忆的存亡：
+
+- **时间衰减**（指数）：用得越少、隔得越久，分数越低。指数衰减让淘汰平滑推进，
+  记忆库因此保持连续，一批记忆的过期时间自然错开。
+- **命中次数**：被召回过说明有用，`touch()` 会累加。
+- **置信度**：模型抽取时的把握程度，推测性内容分数天然更低。
+
+容量超限（200 条）时按这个分数从低到高淘汰。
+
+### 7.3 冲突消解
+
+这是记忆系统里最容易做错的一件事。
+
+如果新事实直接追加，记忆库里会同时存在
+「用户是 Android 工程师」和「用户是后端工程师」，
+被一起召回时模型反而更困惑——两条互相矛盾的信息比零信息更干扰模型。
+
+```java
+/** 同一类型且 key 相同即视为同一条记忆的不同版本。 */
+private static boolean isSame(MemoryItem a, MemoryItem b) {
+    if (a == null || b == null || a.getType() != b.getType()) {
+        return false;
+    }
+    String ka = a.getKey();
+    String kb = b.getKey();
+    if (ka.isEmpty() || kb.isEmpty()) {
+        return false; // 没有 key 的条目无法判定同一性，只能新增
+    }
+    return ka.equals(kb);
+}
+```
+
+命中同一条时**用覆盖完成更新**：
+
+```java
+/**
+ * 用新内容覆盖（保留创建时间与命中数）。
+ * 用于冲突消解：同一 key 出现矛盾信息时，以新的为准。
+ */
+public void overwrite(String newContent, float newConfidence) {
+    this.content = newContent == null ? "" : newContent.trim();
+    this.confidence = clamp(newConfidence);
+    this.updatedAt = System.currentTimeMillis();
+}
+```
+
+保留创建时间与命中数很重要——这条记忆的"资历"始终延续，内容更新时重新起算。
+
+### 7.4 抽取：只记该记的
+
+**只抽取该记的部分**是关键。每轮对话全量入库时，
+检索质量会被大量寒暄稀释掉，几百条之后可用性急剧下降。
+
+提示词里明确要求：只写对话里明确出现的信息、推测的一律略过、最多 5 条、
+已有记忆里出现过的跳过、**本轮确有值得记的内容才输出条目**——
+最后这一条要求很重要，模型因此在素材单薄时直接交白卷。
+
+```
+请从下面这段对话中提取值得长期记住的信息，供以后的对话参考。
+
+【已记住的内容】（这些不要重复；如果新信息与之矛盾，以新的为准）
+...
+
+【本次对话】
+...
+
+只输出一个 JSON 数组，不要解释、不要用 markdown 代码块围栏。每条格式：
+{"type":"semantic|procedural|episodic","key":"主题或主语","content":"一句话事实","confidence":0.9}
+
+type 的取值：
+· semantic：关于用户的稳定事实（身份、偏好、约束、明确说过的信息）
+· procedural：用户要求的做事方式或输出格式（例如「先给结论」「代码要可运行」）
+· episodic：本次对话的主题与最终结论，一句话概括
+```
+
+解析必须容错——模型经常在 JSON 外包一层 markdown 代码块，或在数组前后加废话：
+
+```java
+static List<MemoryItem> parse(String raw) {
+    List<MemoryItem> items = new ArrayList<>();
+    if (raw == null) {
+        return items;
+    }
+    String text = raw.trim();
+    if (text.startsWith("```")) {
+        int firstNewline = text.indexOf('\n');
+        if (firstNewline >= 0) {
+            text = text.substring(firstNewline + 1);
+        }
+        int fence = text.lastIndexOf("```");
+        if (fence >= 0) {
+            text = text.substring(0, fence);
+        }
+    }
+    int start = text.indexOf('[');
+    int end = text.lastIndexOf(']');
+    if (start < 0 || end <= start) {
+        return items;
+    }
+    try {
+        JSONArray arr = new JSONArray(text.substring(start, end + 1));
+        // 逐条解析：单条坏掉只丢那一条
+        ...
+    } catch (Exception e) {
+        // 整体解析失败就当这次没抽到，下次再试
+    }
+    return items;
+}
+```
+
+抽取的触发条件与压缩一致：**增量 ≥ 6 条消息才抽一次**，
+进度按会话记录（`progress_<sessionKey>`），同一会话并发只跑一次。
+
+### 7.5 检索：字符 bigram Jaccard
+
+端侧调 embedding 接口要多一次网络往返，还依赖服务端是否提供该能力。
+这里用**字符 bigram 的 Jaccard 相似度**：中文表现好、零依赖、可解释——
+召回错了能立刻看出是哪里匹配上的。
+
+```java
+/**
+ * 相关度：字符 bigram 的 Jaccard 相似度。
+ *
+ * <p>用 bigram 而不是单词，是因为中文没有空格分词，
+ * 而双字组合（"记忆"、"工程"）已经能提供足够的区分度。
+ */
+public static float similarity(String query, String text) {
+    return similarity(bigrams(query), bigrams(text));
+}
+```
+
+两个阈值设计：
+
+```java
+/** 程序记忆固定带上的条数。 */
+private static final int PROCEDURAL_ALWAYS = 2;
+/** 相关度低于这个阈值就不召回，宁缺毋滥——无关记忆比没记忆更干扰模型。 */
+private static final float MIN_RELEVANCE = 0.12f;
+```
+
+- **程序记忆按遗忘分直接取前 2 条固定带上**，全程参与下发。
+- 语义/情景记忆的相关度需达到 0.12 才召回——**低相关记忆比零记忆更干扰模型**。
+
+接口保持稳定，后续要换成 embedding 只需替换 `similarity` 一个方法。
+
+### 7.6 注入上下文的位置
+
+记忆作为**独立的一层预算**，下发成一条独立的 system 消息：
+
+```
+system prompt        ← 人设
+长期记忆              ← 关于用户的持久事实（全局背景）
+本次会话摘要          ← 本次聊了什么
+最近对话              ← 最近几轮原文
+```
+
+```java
+// 下发顺序：系统提示词 → 长期记忆 → 本次摘要 → 历史。
+// 先给全局背景（人设、关于用户的长期事实），再给本次会话背景，最后才是最近对话
+out.addAll(memoryItems);
+out.addAll(summaryItems);
+```
+
+`ContextBudget` 里加了对应的配额层：
+
+```java
+public int historyBudget(int systemTokens, int toolTokens,
+                         int summaryTokens, int memoryTokens) {
+    int used = Math.min(systemTokens, systemReserve)
+            + Math.min(toolTokens, toolReserve)
+            + Math.min(summaryTokens, summaryReserve)
+            + Math.min(memoryTokens, memoryReserve);
+    int left = totalTokens - outputReserve - used;
+    return Math.max(left, 256);
+}
+```
+
+注入的文本格式：
+
+```java
+private static String format(List<MemoryItem> items) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("以下是关于这位用户的长期记忆，回答时自然参考即可，不要复述这些内容：\n");
+    for (MemoryItem item : items) {
+        sb.append("· [").append(item.getType().getLabel()).append("] ");
+        if (!item.getKey().isEmpty()) {
+            sb.append(item.getKey()).append("：");
+        }
+        sb.append(item.getContent()).append('\n');
+    }
+    return sb.toString();
+}
+```
+
+"自然参考即可"这一句是有必要的——模型据此把记忆融进回答，照搬原句会显得生硬。
+
+### 7.7 完整流程
+
+```
+ContextManager.buildMessages(history, ...)
+  │
+  ├─ MemoryManager.recallBlock(当前提问)      同步
+  │     ├─ MemoryStore.loadAll()
+  │     ├─ MemoryRetriever.recall(...)       bigram Jaccard + 遗忘分
+  │     ├─ 命中的条目 touch()  → 写回        常用记忆不会被淘汰
+  │     └─ format(...)                      渲染成注入文本
+  │
+  ├─ ContextAssembler.assemble(..., memory) 记忆占一层独立预算
+  │
+  └─ MemoryManager.maybeExtractAsync(...)   异步（延迟一轮生效）
+        ├─ 增量 < 6 条 → 跳过
+        ├─ 已在抽取中 → 跳过
+        └─ MemoryExtractor.extractAsync(...)
+              ├─ 提示词带上"已记住什么"，避免重复抽取
+              ├─ 容错解析 JSON
+              ├─ MemoryStore.upsert()      同 type+key 覆盖
+              └─ 记录抽取进度
+```
+
+---
+
+## 8. 流式日志 StreamLogger
 
 调试流式协议有个天然的困境：直接打印每一行原始报文，
 每 30ms 就产生一条 200 多字符的日志，其中约 95% 是每行完全相同的协议壳
 （`id` / `object` / `created` / `model` / `system_fingerprint`），
 真正变化的只有一两个 token。而且 logcat 会把带 `\n` 的内容按行拆开，
-一条 JSON 被切成碎片，既刷屏又看不出结构。
+一条 JSON 被切成碎片，刷屏的同时结构全丢。
 
 `StreamLogger` 就是为了解决这个：把原始行整理成人能读的块。
 
@@ -1680,10 +1983,10 @@ private static String mark(String symbol, String title) {
    这是"变简单"的主要来源。
 2. **增量合并成块**：连续同类增量先累积，攒到 120 字符打一块。
    几百条 token 日志压成十几条带字数与时长的可读块。
-3. **思考与回答分流**：两者绝不相邻合并，各自成块。
-4. **不砍内容**：超长内容按块切分而不是截断，日志尾部不会丢。
+3. **思考与回答分流**：两者各自成块，边界清晰。
+4. **内容完整**：超长内容按块切分，日志尾部完整保留。
 
-### 协议壳去重不是"赌它不变"
+### 协议壳去重的兜底比对
 
 去重最大的风险是：万一这些字段中途变了呢？
 所以每个事件都会重新比对一次，取值一变立刻告警：
@@ -1718,7 +2021,7 @@ private void checkMetaStable(JSONObject obj) {
 ```
 
 注意 `warned.add(...)` 的用法——`Set.add` 返回 false 表示已存在，
-用它做"每种字段只告警一次"，避免告警本身变成新的刷屏源。
+用它做"每种字段只告警一次"，告警本身因此保持克制。
 
 ### 按行边界切分
 
@@ -1753,7 +2056,7 @@ private void printChunked(String head, String body, String tail) {
 ```
 
 按字符硬切的后果是：续接那条以 `,"created":…` 这种半截 JSON 开头，
-完全看不出它属于哪个事件，也就没法逐条核对报文。
+归属信息随之丢失，逐条核对报文的线索也就断了。
 
 ### 输出后端抽象
 
@@ -1764,7 +2067,7 @@ public interface Sink {
 }
 ```
 
-日志逻辑不直接依赖 `android.util.Log`，而是经 `Sink` 中转（默认用反射调 logcat）。
+日志逻辑经由 `Sink` 中转（默认用反射调 logcat），与 `android.util.Log` 解耦。
 好处是整类可以在 JVM 上跑真实报文做验证——换成内存 `Sink` 就能断言输出内容。
 
 ### 两个开关
@@ -1778,15 +2081,15 @@ public static volatile boolean RAW_TAIL_MODE = true;
 ```
 
 默认尾随模式是个体验上的选择：流式过程中日志保持连贯可读，
-需要核对原文时再往下翻，不会被几十 KB 的 JSON 把思路割断。
+需要核对原文时再往下翻，思路始终连贯。
 
 ---
 
-## 8. Markdown 渲染
+## 9. Markdown 渲染
 
 > 这一块属于 UI，按主题只做简要说明。
 
-Markdown 渲染是**完全手写**的，没有引入 Markwon 之类的库。分三步：
+Markdown 渲染是**完全手写**的，从解析到排版都在本地实现。分三步：
 
 ```
 MarkdownParser.parse(source)  →  List<Block>
@@ -1810,12 +2113,12 @@ public static final int TYPE_LIST = 4;
 
 - **表格用 `TextPaint.measureText` 量列宽**，支持 GFM 的三种对齐（`ALIGN_LEFT/CENTER/RIGHT`），
   两种渲染模式（超宽时按比例压缩 vs 保持自然列宽横向滚动）。
-- **流式期间不走完整解析**。`ChatAdapter` 有独立的快速通道，
-  流式过程中只 `setText`，生成结束后才走一次完整渲染，避免每个 token 都重建视图结构。
+- **流式期间走快速通道**。`ChatAdapter` 有独立的渲染路径，
+  流式过程中只 `setText`，生成结束后才走一次完整渲染，视图结构保持稳定。
 
 ---
 
-## 9. 数据与配置
+## 10. 数据与配置
 
 ### 9.1 多套接口配置
 
@@ -1837,7 +2140,7 @@ private static final String LEGACY_API_KEY = "api_key";
 private static final String LEGACY_MODEL = "model";
 ```
 
-读写都返回**副本**（`profile.copy()`），避免调用方持有内部对象后意外改到单例状态。
+读写都返回**副本**（`profile.copy()`），调用方拿到的是独立对象，单例状态始终安全。
 
 ### 9.2 消息模型
 
@@ -1848,11 +2151,11 @@ private static final String LEGACY_MODEL = "model";
 | `role` | `ROLE_USER` / `ROLE_AI` / `ROLE_TOOL` |
 | `content` | 正文 |
 | `thinking` | 思考过程，与正文分开存储 |
-| `error` | **是否为错误信息**：错误内容不参与上下文回传 |
+| `error` | **是否为错误信息**：错误内容仅作本地提示 |
 | `toolCallId` | `role=tool` 时对应 `tool_calls` 的 id |
 | `toolCalls` | assistant 发起的工具调用（含执行结果） |
 | `rawResponse` | API 原始返回，长按气泡可查看 |
-| `streaming` | 流式进行中标记（不持久化） |
+| `streaming` | 流式进行中标记（仅内存态） |
 
 `error` 标记是个重要设计：
 
@@ -1885,7 +2188,7 @@ public List<Conversation> loadAll() {
 ```
 
 标题有两个来源：默认用第一条用户消息截断 16 字兜底，
-也可以在设置里打开「自动生成标题」，让模型生成不超过 20 字的摘要。
+也可以在设置里打开「自动生成标题」，让模型生成 20 字以内的摘要。
 
 ### 9.4 界面偏好
 
@@ -1894,20 +2197,20 @@ public List<Conversation> loadAll() {
 
 ---
 
-## 10. 已知坑与解决方案
+## 11. 已知坑与解决方案
 
 这一章记录的是真实踩过的坑。每个坑都有对应的代码级处理。
 
 ### 10.1 Ollama 的 1024 天花板
 
-**现象**：模型只蹦几个字符的思考内容就返回 `[DONE]`，正式回答一个字都没有。
+**现象**：模型只输出几个字符的思考内容就返回 `[DONE]`，正式回答为空。
 日志里表现为 `finish_reason: length`。
 
 **原因**：Ollama 的 `num_predict` 默认只有 1024。思考过程（reasoning）会**先吃掉这份预算**，
-吃光之后就返回 `finish_reason: length`，正式回答还没开始。
+预算耗尽后返回 `finish_reason: length`，此时正式回答才刚要开始。
 
-**关键认知**：App 侧「最大输出 Token」**留空 ≠ 不限制**。
-留空是"不下发该字段"="用服务端默认"= 1024。
+**关键认知**：App 侧「最大输出 Token」**留空即取服务端默认**。
+留空意味着该字段整体省略、交由服务端取默认值，Ollama 为 1024。
 
 **解决**：
 1. 设置里把「最大输出 Token」填大（如 8192）；
@@ -1927,7 +2230,7 @@ if ("length".equals(finishReason)) {
 
 ### 10.2 关闭思考必须用 `reasoning_effort: "none"`
 
-`"think": false` 对部分服务端不生效。现在统一下发：
+`"think": false` 只在部分服务端生效。现在统一下发：
 
 ```java
 if (config.isDisableThinking()) {
@@ -1935,18 +2238,18 @@ if (config.isDisableThinking()) {
 }
 ```
 
-另外这个开关必须**立即持久化**。用户反馈过"关了不生效 / 不记住"，
-原因是设置页在校验失败时会提前 return，导致开关没落盘。
+另外这个开关必须**立即持久化**。用户反馈过"关掉之后下次进来又恢复原状"，
+原因是设置页在校验失败时会提前 return，开关的落盘被跳过。
 现在的处理是**开关写入排在校验之前**。
 
 ### 10.3 读超时会误判思考型模型
 
 **现象**：思考型模型思考十几分钟，60 秒时被判超时。
 
-**解决**：`READ_TIMEOUT_MS = 0`（不限制），配套用 `MAX_RAW_CHARS = 1MB` 兜底内存。
-不想等了用界面上的「停止」按钮主动断开。
+**解决**：`READ_TIMEOUT_MS = 0`（读取时长放开），配套用 `MAX_RAW_CHARS = 1MB` 兜底内存。
+需要中断时用界面上的「停止」按钮主动断开。
 
-### 10.4 工具调用与结果不能分离
+### 10.4 工具调用与结果必须成组
 
 裁剪历史时如果只留下 `assistant` 的 `tool_calls` 而丢掉对应的 `role=tool` 结果，
 多数服务端直接返回 400。上下文模块用「按组裁剪」解决，见 [6.4](#64-按组裁剪算法)。
@@ -1961,7 +2264,7 @@ if (config.isDisableThinking()) {
 **现象**：切换 API 配置后，某些开关变成旧值。
 
 **原因**：设置页 `bindForm()` 回填表单时，`setChecked` 会触发 `OnCheckedChangeListener`
-里的 `persistToggles()`，把**还没回填完的另外两个开关的旧值**写进新配置。
+里的 `persistToggles()`，把**另外两个待回填开关的旧值**写进新配置。
 
 **解决**：加 `bindingForm` 标志位，回填期间屏蔽回调。
 
@@ -1973,38 +2276,41 @@ if (config.isDisableThinking()) {
 
 ### 10.7 流式输出导致卡顿 / 气泡被顶飞
 
-已修，改动点不要退回去：
+已修，以下改动点需要保持：
 
 - `RecyclerView.setItemAnimator(null)`、`setItemViewCacheSize(8)`
 - 流式走快速通道：`bindStreamingLayout()` + `updateStreamingContent()`
 - 思考块流式期间 `setMaxLines(6)` + 只显示最后 400 字符，
-  **不要用 `TruncateAt.START`**（会导致文本反复重排）
+  **选择 `TruncateAt.END`**（`TruncateAt.START` 会让文本反复重排）
 - 节流 80ms；`autoScrollToBottom` 由 `canScrollVertically(1)` 判定，
   用户手动上滑就停止自动跟随
 
 ---
 
-## 11. 设计取舍
+## 12. 设计取舍
 
 | 取舍 | 选择 | 理由 |
 |---|---|---|
-| 网络库 | 手写 `HttpURLConnection` | 无三方依赖；流式读取行为完全可控 |
+| 网络库 | 手写 `HttpURLConnection` | 零三方依赖；流式读取行为完全可控 |
 | JSON | Android 自带 `org.json` | 同上，代价是 API 比较啰嗦 |
-| LLM 框架 | 不用 | 需要精确控制上下文预算和状态机，框架的抽象会挡住优化点 |
-| 回调传值 | 传累计全文而非增量 | UI 侧丢帧也不丢字，状态简单 |
-| 线程模型 | 单线程池 | 一次对话同时只有一个请求，够用且不易出错 |
-| 压缩时机 | 延迟一轮生效 | 换来了引擎异步流程零改动；压缩失败也不影响对话 |
-| 工具能力 | 只做只读 | 小模型判断力有限，避免不可逆后果 |
-| 历史裁剪 | 按组而非按条 | 防止 tool_calls 与结果分离导致 400 |
-| 持久化 | `SharedPreferences` + JSON | 数据量小（几十个会话），不值得引入 Room |
+| LLM 框架 | 手写 | 需要精确控制上下文预算和状态机，手写让控制点保持显式 |
+| 回调传值 | 传累计全文 | UI 侧丢帧仍保持内容完整，状态简单 |
+| 线程模型 | 单线程池 | 一次对话同时只有一个请求，够用且状态清晰 |
+| 压缩时机 | 延迟一轮生效 | 换来了引擎异步流程零改动；压缩失败也与对话链路隔离 |
+| 工具能力 | 只做只读 | 小模型判断力有限，只读操作的后果可控 |
+| 历史裁剪 | 按组 | tool_calls 与结果同进同退，规避 400 |
+| 记忆检索 | bigram Jaccard | 端侧调 embedding 多一次网络往返且依赖服务端能力；bigram 零依赖可解释 |
+| 记忆冲突 | 覆盖 | 两条矛盾信息比零信息更有害 |
+| 抽取时机 | 后台异步、延迟一轮 | 与压缩同一节拍；失败与对话链路隔离 |
+| 持久化 | `SharedPreferences` + JSON | 数据量小（几十个会话、两百条记忆），轻量方案刚好够用 |
 
-**关于"不用框架"**：这不是造轮子的执念。上下文预算和工具调用状态机恰恰是
+**关于手写协议与调度**：目的很直接。上下文预算和工具调用状态机恰恰是
 最需要精细控制的两个地方，而框架的默认抽象（比如自动管理 messages）
 会把这些控制点藏起来。手写之后，每一层 token 怎么算、哪一条被丢掉，都是显式的。
 
 ---
 
-## 12. 路线图
+## 13. 路线图
 
 按「上下文工程 → Agent 能力 → 评测」的顺序推进。
 
@@ -2014,6 +2320,7 @@ if (config.isDisableThinking()) {
 - [x] Function Calling 多轮循环
 - [x] 上下文分层预算与按组裁剪
 - [x] 滚动摘要压缩（只压增量）
+- [x] 三层记忆系统（抽取、冲突消解、遗忘、bigram 召回）
 - [x] 流式日志整理
 
 ### 进行中 / 规划
@@ -2024,14 +2331,14 @@ if (config.isDisableThinking()) {
 | P1 | ReAct 状态机 | 把「推理 → 行动 → 观察 → 反思」显式分阶段，每阶段独立预算 |
 | P1 | Plan-and-Execute | 复杂任务先出计划，执行中动态增删改，解决"跑偏忘目标" |
 | P1 | Eval 评测集 | 30~50 条任务 + 全链路 Trace，量化改动效果 |
-| P2 | 记忆系统 | 情景 / 语义 / 程序三层记忆，写入时机与冲突消解 |
-| P2 | Agentic RAG | 混合检索 + Rerank + 检索自纠，把检索做成工具而非固定流水线 |
+| ~~P2~~ | ~~记忆系统~~ | ✅ 已完成，见[第 7 章](#7-记忆系统三层记忆) |
+| P2 | Agentic RAG | 混合检索 + Rerank + 检索自纠，把检索做成模型可调度的工具 |
 | P3 | MCP Client | 远端工具动态发现与注册，与本地工具统一调度 |
 | P3 | Sub-agent 编排 | 子 Agent 上下文隔离，结果摘要回传 |
 
 ---
 
-## 13. 附录：关键代码索引
+## 14. 附录：关键代码索引
 
 | 想看什么 | 文件 | 位置 |
 |---|---|---|
@@ -2048,6 +2355,12 @@ if (config.isDisableThinking()) {
 | 滚动压缩 | `ai/context/RollingCompressor.java` | `compactAsync()` / `SUMMARY_PROMPT` |
 | 摘要持久化 | `ai/context/SummaryStore.java` | `load()` / `save()` |
 | 上下文门面 | `ai/context/ContextManager.java` | `buildMessages()` |
+| 记忆类型 | `ai/memory/MemoryType.java` | 三层定义与半衰期 |
+| 记忆条目 | `ai/memory/MemoryItem.java` | `score()` 遗忘评分 |
+| 记忆存储 | `ai/memory/MemoryStore.java` | `upsert()` 冲突消解 / `trim()` 淘汰 |
+| 记忆检索 | `ai/memory/MemoryRetriever.java` | `recall()` / `similarity()` |
+| 记忆抽取 | `ai/memory/MemoryExtractor.java` | `EXTRACT_PROMPT` / `parse()` |
+| 记忆门面 | `ai/memory/MemoryManager.java` | `recallBlock()` / `maybeExtractAsync()` |
 | 流式日志 | `ai/StreamLogger.java` | `onEvent()` / `flushBlock()` / `mark()` |
 | 消息模型 | `model/ChatMessage.java` | `toJson()` / `fromJson()` |
 | 接口配置 | `data/ApiConfigStore.java` | `getActiveProfile()` |
@@ -2057,11 +2370,12 @@ if (config.isDisableThinking()) {
 | 模块 | 文件数 | 行数 | 说明 |
 |---|---|---|---|
 | `ai/` | 6 | 1671 | 引擎、工具、日志 |
-| `ai/context/` | 8 | 940 | 上下文工程 |
+| `ai/context/` | 8 | 987 | 上下文工程 |
+| `ai/memory/` | 6 | 928 | 三层记忆 |
 | `data/` | 4 | 539 | 配置与持久化 |
 | `model/` | 4 | 593 | 数据模型 |
 | `ui/` | 11 | 3152 | 界面与 Markdown 渲染 |
-| **合计** | **33** | **6895** | |
+| **合计** | **39** | **7870** | |
 
 ---
 

@@ -31,6 +31,7 @@ import com.doudou.x.ai.AiEngine;
 import com.doudou.x.ai.MockAiEngine;
 import com.doudou.x.ai.OpenAiEngine;
 import com.doudou.x.ai.context.ContextManager;
+import com.doudou.x.ai.memory.MemoryManager;
 import com.doudou.x.ai.ToolExecutor;
 import com.doudou.x.ai.ToolRegistry;
 import com.doudou.x.data.ApiConfigStore;
@@ -140,6 +141,8 @@ public class MainActivity extends AppCompatActivity {
         titleEngine = new OpenAiEngine(apiConfig);
         // 上下文模块初始化：内部自带一个独立的引擎做历史摘要压缩
         ContextManager.get().init(this);
+        // 记忆系统初始化：三层记忆的抽取同样用独立引擎
+        MemoryManager.get().init(this);
 
         initViews();
         initChatList();

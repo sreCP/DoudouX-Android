@@ -5,6 +5,7 @@ import android.util.Log;
 
 import com.doudou.x.ai.OpenAiEngine;
 import com.doudou.x.ai.ToolRegistry;
+import com.doudou.x.ai.memory.MemoryManager;
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.model.ChatMessage;
 
@@ -80,19 +81,39 @@ public final class ContextManager {
         SummaryStore.Summary summary =
                 store == null ? SummaryStore.Summary.empty() : store.load(sessionKey);
         JSONArray tools = withTools ? ToolRegistry.toolsJson() : null;
+        // 长期记忆：按当前提问召回，与摘要分开占一层预算
+        String memory = MemoryManager.get().recallBlock(lastUserText(history));
         ContextPlan plan = new ContextAssembler(budget).assemble(
                 history,
                 systemPrompt,
                 tools == null ? null : tools.toString(),
                 tools == null ? 0 : tools.length(),
-                summary.text);
+                summary.text,
+                memory);
         Log.d(LOG_TAG, "上下文组装：合计≈" + plan.stats.totalTokens() + " token，系统="
                 + plan.stats.systemTokens + "，工具=" + plan.stats.toolTokens
+                + "，记忆=" + plan.stats.memoryTokens
                 + "，摘要=" + plan.stats.summaryTokens + "，历史=" + plan.stats.historyTokens
                 + "，丢弃=" + plan.stats.droppedCount + "，截断=" + plan.stats.truncatedCount
                 + (plan.stats.overflow ? "，保护窗口仍超预算" : ""));
         maybeCompact(history, sessionKey, summary);
+        // 记忆抽取：同样后台跑、只处理增量，结果下一次请求才用上
+        MemoryManager.get().maybeExtractAsync(history, sessionKey);
         return plan.toJsonArray();
+    }
+
+    /** 当前这一轮的提问，作为记忆召回的查询词。 */
+    private static String lastUserText(List<ChatMessage> history) {
+        if (history == null) {
+            return "";
+        }
+        for (int i = history.size() - 1; i >= 0; i--) {
+            ChatMessage msg = history.get(i);
+            if (msg.getRole() == ChatMessage.ROLE_USER) {
+                return msg.getContent() == null ? "" : msg.getContent();
+            }
+        }
+        return "";
     }
 
     /** 需要压缩就后台压一次；结果下一次请求生效，本轮不受影响。 */

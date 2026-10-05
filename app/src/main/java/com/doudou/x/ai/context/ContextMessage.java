@@ -22,6 +22,8 @@ public final class ContextMessage {
     public static final int KIND_SUMMARY = 1;
     /** 正常对话历史。 */
     public static final int KIND_HISTORY = 2;
+    /** 长期记忆块，由 ai.memory 模块召回，与系统提示词、摘要分开计量。 */
+    public static final int KIND_MEMORY = 3;
 
     public static final String ROLE_SYSTEM = "system";
     public static final String ROLE_USER = "user";
@@ -54,6 +56,10 @@ public final class ContextMessage {
 
     public static ContextMessage summary(String text) {
         return new ContextMessage(ROLE_SYSTEM, text, KIND_SUMMARY, null, false);
+    }
+
+    public static ContextMessage memory(String text) {
+        return new ContextMessage(ROLE_SYSTEM, text, KIND_MEMORY, null, false);
     }
 
     /**

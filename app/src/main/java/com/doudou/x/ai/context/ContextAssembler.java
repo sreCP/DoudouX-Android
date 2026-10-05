@@ -30,9 +30,11 @@ public final class ContextAssembler {
      * @param toolsJson    tools[] 的 JSON 文本，不带工具时为 null
      * @param toolCount    工具条数
      * @param summary      该会话已有的历史摘要，没有则传空
+     * @param memory       长期记忆块（ai.memory 召回），没有则传空
      */
     public ContextPlan assemble(List<ChatMessage> history, String systemPrompt,
-                                String toolsJson, int toolCount, String summary) {
+                                String toolsJson, int toolCount,
+                                String summary, String memory) {
         ContextPlan.Stats stats = new ContextPlan.Stats();
         List<ContextMessage> out = new ArrayList<>();
 
@@ -50,10 +52,18 @@ public final class ContextAssembler {
             summaryItems.add(item);
         }
 
+        List<ContextMessage> memoryItems = new ArrayList<>();
+        if (memory != null && !memory.trim().isEmpty()) {
+            ContextMessage item = ContextMessage.memory(memory.trim());
+            stats.memoryTokens = item.getTokens();
+            memoryItems.add(item);
+        }
+
         List<List<ContextMessage>> groups = group(history);
         int protectFrom = protectFrom(groups, budget.getKeepRecentTurns());
         int available = budget.historyBudget(
-                stats.systemTokens, stats.toolTokens, stats.summaryTokens);
+                stats.systemTokens, stats.toolTokens,
+                stats.summaryTokens, stats.memoryTokens);
 
         // 从最新往回装：装不下就停，剩下更老的整组丢弃
         int used = 0;
@@ -93,7 +103,9 @@ public final class ContextAssembler {
         for (int i = 0; i < firstKept; i++) {
             stats.droppedCount += groups.get(i).size();
         }
-        // 下发顺序：系统提示词 → 摘要 → 历史，先给全局背景再贴最近对话
+        // 下发顺序：系统提示词 → 长期记忆 → 本次摘要 → 历史。
+        // 先给全局背景（人设、关于用户的长期事实），再给本次会话背景，最后才是最近对话
+        out.addAll(memoryItems);
         out.addAll(summaryItems);
         for (int i = firstKept; i < groups.size(); i++) {
             for (ContextMessage item : groups.get(i)) {

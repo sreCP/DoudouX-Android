@@ -32,6 +32,8 @@ public final class ContextPlan {
         public int systemTokens;
         public int toolTokens;
         public int summaryTokens;
+        /** 长期记忆块（ai.memory 召回）。 */
+        public int memoryTokens;
         public int historyTokens;
         /** 因预算不足被整条丢弃的历史条数。 */
         public int droppedCount;
@@ -41,7 +43,8 @@ public final class ContextPlan {
         public boolean overflow;
 
         public int totalTokens() {
-            return systemTokens + toolTokens + summaryTokens + historyTokens;
+            return systemTokens + toolTokens + summaryTokens
+                    + memoryTokens + historyTokens;
         }
     }
 }
