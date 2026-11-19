@@ -1,24 +1,32 @@
 package com.doudou.x.ui.settings;
 
+import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.doudou.x.R;
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.data.ConversationStore;
 import com.doudou.x.data.SessionManager;
+import com.doudou.x.data.TavilyConfigStore;
 import com.doudou.x.data.UiSettingsStore;
 import com.doudou.x.model.ApiProfile;
 import com.doudou.x.ui.login.LoginActivity;
@@ -28,11 +36,16 @@ import com.doudou.x.ui.login.LoginActivity;
  */
 public class SettingsActivity extends AppCompatActivity {
 
+    private static final int REQ_CALENDAR_PERMISSION = 2001;
+
     private TextView tvApiStatus;
     private SwitchCompat switchCodeWrap;
     private TextView tvCodeModeSubtitle;
     private SwitchCompat switchAutoTitle;
     private TextView tvAutoTitleSubtitle;
+    private SwitchCompat switchNativeWrite;
+    private TextView tvNativeWriteSubtitle;
+    private EditText etTavilyApiKey;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -43,6 +56,7 @@ public class SettingsActivity extends AppCompatActivity {
         TextView tvAccount = findViewById(R.id.tvSettingsAccount);
         LinearLayout btnApiSettings = findViewById(R.id.btnApiSettings);
         tvApiStatus = findViewById(R.id.tvApiStatus);
+        TextView btnCalendarPermission = findViewById(R.id.btnCalendarPermission);
         TextView btnClearHistory = findViewById(R.id.btnClearHistory);
         TextView tvVersion = findViewById(R.id.tvVersion);
         TextView btnLogout = findViewById(R.id.btnLogout);
@@ -94,6 +108,54 @@ public class SettingsActivity extends AppCompatActivity {
                     }
                 });
 
+        switchNativeWrite = findViewById(R.id.switchNativeWrite);
+        tvNativeWriteSubtitle = findViewById(R.id.tvNativeWriteSubtitle);
+        switchNativeWrite.setChecked(uiSettings.isNativeWriteEnabled());
+        refreshNativeWriteSubtitle();
+        switchNativeWrite.setOnCheckedChangeListener(
+                new android.widget.CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(android.widget.CompoundButton buttonView,
+                                                 boolean isChecked) {
+                        uiSettings.setNativeWriteEnabled(isChecked);
+                        refreshNativeWriteSubtitle();
+                    }
+                });
+
+        btnCalendarPermission.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (calendarPermissionGranted()) {
+                    Toast.makeText(SettingsActivity.this,
+                            R.string.settings_calendar_permission_granted,
+                            Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                ActivityCompat.requestPermissions(SettingsActivity.this,
+                        new String[]{Manifest.permission.READ_CALENDAR,
+                                Manifest.permission.WRITE_CALENDAR},
+                        REQ_CALENDAR_PERMISSION);
+            }
+        });
+
+        etTavilyApiKey = findViewById(R.id.etTavilyApiKey);
+        final TavilyConfigStore tavilyConfig = TavilyConfigStore.getInstance(this);
+        etTavilyApiKey.setText(tavilyConfig.getApiKey());
+        etTavilyApiKey.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                tavilyConfig.setApiKey(s.toString());
+            }
+        });
+
         btnClearHistory.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -134,6 +196,34 @@ public class SettingsActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         refreshApiStatus();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_CALENDAR_PERMISSION) {
+            return;
+        }
+        Toast.makeText(this,
+                calendarPermissionGranted()
+                        ? R.string.settings_calendar_permission_granted
+                        : R.string.settings_calendar_permission_denied,
+                Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean calendarPermissionGranted() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR)
+                == PackageManager.PERMISSION_GRANTED
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** 显示写操作开关说明。 */
+    private void refreshNativeWriteSubtitle() {
+        tvNativeWriteSubtitle.setText(switchNativeWrite.isChecked()
+                ? R.string.settings_native_write_subtitle_on
+                : R.string.settings_native_write_subtitle_off);
     }
 
     /** 显示当前代码块渲染方式说明。 */

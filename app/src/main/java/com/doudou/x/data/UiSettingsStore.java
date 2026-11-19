@@ -11,6 +11,7 @@ public class UiSettingsStore {
     private static final String PREF_NAME = "doudou_ui_settings";
     private static final String KEY_CODE_WRAP = "code_wrap_mode";
     private static final String KEY_AUTO_TITLE = "auto_title_enabled";
+    private static final String KEY_NATIVE_WRITE = "native_write_enabled";
 
     private static UiSettingsStore instance;
     private final SharedPreferences prefs;
@@ -43,5 +44,17 @@ public class UiSettingsStore {
 
     public void setAutoTitleEnabled(boolean enabled) {
         prefs.edit().putBoolean(KEY_AUTO_TITLE, enabled).apply();
+    }
+
+    /**
+     * 是否允许原生工具修改本机数据（当前是日历日程）。默认关闭，
+     * 因为小模型可能在用户未明确要求时尝试写操作，而日程改动没有撤销入口。
+     */
+    public boolean isNativeWriteEnabled() {
+        return prefs.getBoolean(KEY_NATIVE_WRITE, false);
+    }
+
+    public void setNativeWriteEnabled(boolean enabled) {
+        prefs.edit().putBoolean(KEY_NATIVE_WRITE, enabled).apply();
     }
 }
