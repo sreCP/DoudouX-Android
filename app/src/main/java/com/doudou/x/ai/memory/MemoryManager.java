@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.doudou.x.ai.OpenAiEngine;
+import com.doudou.x.ai.StreamLogger;
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.model.ChatMessage;
 
@@ -27,7 +28,7 @@ import java.util.Set;
  */
 public final class MemoryManager {
 
-    private static final String LOG_TAG = OpenAiEngine.LOG_TAG;
+    private static final String LOG_TAG = StreamLogger.LOG_TAG;
 
     private static final MemoryManager INSTANCE = new MemoryManager();
 

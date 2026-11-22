@@ -3,7 +3,7 @@ package com.doudou.x.ai.memory;
 import android.util.Log;
 
 import com.doudou.x.ai.AiEngine;
-import com.doudou.x.ai.OpenAiEngine;
+import com.doudou.x.ai.StreamLogger;
 import com.doudou.x.model.ChatMessage;
 import com.doudou.x.model.ToolCall;
 
@@ -25,7 +25,7 @@ import java.util.List;
  */
 public final class MemoryExtractor {
 
-    private static final String LOG_TAG = OpenAiEngine.LOG_TAG;
+    private static final String LOG_TAG = StreamLogger.LOG_TAG;
 
     /** 增量不足这个条数不值得抽一次。 */
     public static final int MIN_NEW_MESSAGES = 6;

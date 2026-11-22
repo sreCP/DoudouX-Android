@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.doudou.x.ai.OpenAiEngine;
+import com.doudou.x.ai.StreamLogger;
 import com.doudou.x.ai.ToolRegistry;
 import com.doudou.x.ai.memory.MemoryManager;
 import com.doudou.x.data.ApiConfigStore;
@@ -27,7 +28,7 @@ import java.util.Set;
  */
 public final class ContextManager {
 
-    private static final String LOG_TAG = OpenAiEngine.LOG_TAG;
+    private static final String LOG_TAG = StreamLogger.LOG_TAG;
 
     private static final ContextManager INSTANCE = new ContextManager();
 
@@ -39,6 +40,19 @@ public final class ContextManager {
 
     /** 正在压缩的会话，避免同一会话重复发起。 */
     private final Set<String> compacting = new HashSet<>();
+
+    /**
+     * 本次线程最近一次组装的统计快照，给 trace 埋点读取。
+     *
+     * <p>用 ThreadLocal 而不是单例字段：引擎、压缩、生成标题各跑在自己的线程，
+     * 单例字段会互相覆盖。设为 null 表示本线程还没组装过，trace 记 0 即可。
+     */
+    private static final ThreadLocal<ContextPlan.Stats> LAST_STATS = new ThreadLocal<>();
+
+    /** 读取本线程最近一次上下文组装统计，可能返回 null。 */
+    public static ContextPlan.Stats lastStats() {
+        return LAST_STATS.get();
+    }
 
     private ContextManager() {
     }
@@ -90,6 +104,7 @@ public final class ContextManager {
                 tools == null ? 0 : tools.length(),
                 summary.text,
                 memory);
+        LAST_STATS.set(plan.stats);
         Log.d(LOG_TAG, "上下文组装：合计≈" + plan.stats.totalTokens() + " token，系统="
                 + plan.stats.systemTokens + "，工具=" + plan.stats.toolTokens
                 + "，记忆=" + plan.stats.memoryTokens

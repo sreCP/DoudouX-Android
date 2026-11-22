@@ -139,6 +139,12 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         titleEngine = new OpenAiEngine(apiConfig);
+        // 标题只是一个「一句话摘要」，走精简请求：
+        //   1) 不发 system prompt（本次请求只带一条 user 消息，rawMessages 直出）；
+        //   2) 不注入上下文分层、记忆召回、工具定义，也不跑 Function Calling 多轮；
+        //   3) reasoning_effort=none + think=false，让 Ollama 彻底不思考；
+        //   4) max_tokens 收到 64、温度 0.3，避免模型长篇发挥把预算烧在思考上。
+        titleEngine.setLiteRequest(true);
         // 上下文模块初始化：内部自带一个独立的引擎做历史摘要压缩
         ContextManager.get().init(this);
         // 记忆系统初始化：三层记忆的抽取同样用独立引擎
