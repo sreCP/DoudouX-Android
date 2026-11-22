@@ -64,6 +64,24 @@
     <string name="settings_web_search">网络搜索（Tavily）</string>
     <string name="settings_web_search_subtitle">填写 API Key 后模型可联网搜索；每次最多返回 3 条，免费套餐每月 1000 credits</string>
     <string name="settings_web_search_api_key_hint">tvly-…</string>
+
+    <!-- Agent Ops 网关 -->
+    <string name="settings_ops_title">Agent 网关（可观测看板）</string>
+    <string name="settings_ops_subtitle">trace 由网关自动记录，这里只填网关地址用于打开看板；需与手机同局域网</string>
+    <string name="settings_ops_url_hint">http://192.168.1.6:8080</string>
+    <string name="settings_ops_test">测试网关连接</string>
+    <string name="settings_ops_test_running">正在测试…</string>
+    <string name="settings_ops_open_dashboard">打开可观测看板</string>
+
+    <!-- Runtime 自检 -->
+    <string name="settings_run_eval">运行 Runtime 自检</string>
+    <string name="settings_run_eval_subtitle">跑一遍解析、预算、记忆与工具门控的确定性断言</string>
+    <string name="eval_result_title">自检结果</string>
+    <string name="eval_running">正在运行…</string>
+    <string name="eval_export_trace">导出执行 trace</string>
+    <string name="eval_trace_empty">还没有执行 trace，先聊一轮再导出</string>
+    <string name="eval_export_done">trace 已导出到应用私有目录 traces/</string>
+
     <string name="settings_api_status_mock">未启用（使用模拟回复）</string>
     <string name="settings_api_status_real">已启用 · </string>
 

@@ -2,12 +2,14 @@ package com.doudou.x.ui.settings;
 
 import android.Manifest;
 import android.content.Intent;
+import android.net.Uri;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
+import android.widget.ScrollView;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
@@ -23,8 +25,13 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.doudou.x.R;
+import com.doudou.x.ai.observability.TraceReporter;
+import com.doudou.x.eval.EvalReport;
+import com.doudou.x.eval.EvalRunner;
+import com.doudou.x.eval.JsonlExporter;
 import com.doudou.x.data.ApiConfigStore;
 import com.doudou.x.data.ConversationStore;
+import com.doudou.x.data.OpsConfigStore;
 import com.doudou.x.data.SessionManager;
 import com.doudou.x.data.TavilyConfigStore;
 import com.doudou.x.data.UiSettingsStore;
@@ -46,6 +53,9 @@ public class SettingsActivity extends AppCompatActivity {
     private SwitchCompat switchNativeWrite;
     private TextView tvNativeWriteSubtitle;
     private EditText etTavilyApiKey;
+    private EditText etOpsBaseUrl;
+    private TextView btnTestOps;
+    private TextView btnOpenDashboard;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -57,6 +67,7 @@ public class SettingsActivity extends AppCompatActivity {
         LinearLayout btnApiSettings = findViewById(R.id.btnApiSettings);
         tvApiStatus = findViewById(R.id.tvApiStatus);
         TextView btnCalendarPermission = findViewById(R.id.btnCalendarPermission);
+        LinearLayout btnRunEval = findViewById(R.id.btnRunEval);
         TextView btnClearHistory = findViewById(R.id.btnClearHistory);
         TextView tvVersion = findViewById(R.id.tvVersion);
         TextView btnLogout = findViewById(R.id.btnLogout);
@@ -156,6 +167,56 @@ public class SettingsActivity extends AppCompatActivity {
             }
         });
 
+        etOpsBaseUrl = findViewById(R.id.etOpsBaseUrl);
+        btnTestOps = findViewById(R.id.btnTestOps);
+        btnOpenDashboard = findViewById(R.id.btnOpenDashboard);
+        final OpsConfigStore opsConfig = OpsConfigStore.getInstance(this);
+        etOpsBaseUrl.setText(opsConfig.getBaseUrl());
+        etOpsBaseUrl.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                opsConfig.setBaseUrl(s.toString());
+            }
+        });
+        btnTestOps.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                testOpsConnection();
+            }
+        });
+        btnOpenDashboard.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String url = OpsConfigStore.getInstance(SettingsActivity.this).normalizedBaseUrl();
+                if (url.isEmpty()) {
+                    Toast.makeText(SettingsActivity.this,
+                            R.string.settings_ops_subtitle, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url + "/")));
+                } catch (Exception e) {
+                    Toast.makeText(SettingsActivity.this,
+                            "无法打开浏览器：" + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+
+        btnRunEval.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showEvalDialog();
+            }
+        });
+
         btnClearHistory.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -217,6 +278,69 @@ public class SettingsActivity extends AppCompatActivity {
                 == PackageManager.PERMISSION_GRANTED
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR)
                 == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** 跑一遍确定性自检，结果用可滚动对话框展示。 */
+    private void showEvalDialog() {
+        EvalReport report = EvalRunner.runAll();
+        android.util.Log.i("DoudouX-Eval", report.toText());
+
+        ScrollView scroll = new ScrollView(this);
+        TextView text = new TextView(this);
+        text.setText(report.toText());
+        text.setTextSize(13f);
+        text.setTextColor(getResources().getColor(R.color.text_primary));
+        text.setPadding(8, 8, 8, 8);
+        scroll.addView(text);
+
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.eval_result_title)
+                .setView(scroll)
+                .setPositiveButton(R.string.action_confirm, null)
+                .setNeutralButton(R.string.eval_export_trace,
+                        (dialog, which) -> exportTrace())
+                .show();
+
+        // 自检本身也落一条 trace，方便后续与真实调用一起统计
+        JsonlExporter.write(this, new com.doudou.x.ai.observability.TraceEvent(
+                System.currentTimeMillis(), "eval", "local", 0,
+                0, 0, 0, 0, 0, 0, 0,
+                false, new java.util.ArrayList<String>(), "eval",
+                report.durationMs, report.allPassed(),
+                report.allPassed() ? "" : "失败 " + report.failedCount() + " 条"));
+    }
+
+    /** 在后台线程探测后端，结果回到主线程用 Toast 展示。 */
+    private void testOpsConnection() {
+        final OpsConfigStore config = OpsConfigStore.getInstance(this);
+        if (!config.isConfigured()) {
+            Toast.makeText(this, R.string.settings_ops_subtitle, Toast.LENGTH_LONG).show();
+            return;
+        }
+        btnTestOps.setText(R.string.settings_ops_test_running);
+        btnTestOps.setEnabled(false);
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final String result = TraceReporter.testConnection(SettingsActivity.this);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        btnTestOps.setText(R.string.settings_ops_test);
+                        btnTestOps.setEnabled(true);
+                        Toast.makeText(SettingsActivity.this, result, Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        }, "doudou-server-test").start();
+    }
+
+    /** 检查 trace 是否已经落盘，给出明确反馈而不是静默无响应。 */
+    private void exportTrace() {
+        int lines = JsonlExporter.readAll(this).size();
+        Toast.makeText(this,
+                lines == 0 ? R.string.eval_trace_empty : R.string.eval_export_done,
+                Toast.LENGTH_SHORT).show();
     }
 
     /** 显示写操作开关说明。 */
